@@ -18,7 +18,7 @@ Windows/PowerShell environment. Tests run in the `science` conda env (the one wi
 ## Architecture
 
 - `src` layout, no runtime dependencies. Two modules under `src/file_quick_signature/`:
-  - `key.py` — pure key logic, no I/O except `stat`: `build_key` / `parse_key` (reverse-parse into `SignatureKey(path, size, mtime_ns)`), `apply_remappers` (ordered `re.sub` pairs), `remap_key`, `file_quick_signature`
+  - `key.py` — pure key logic, no I/O except `stat`: `build_key` / `parse_key` (reverse-parse into `SignatureKey(path, size, mtime_ns)`), `apply_remappers` (ordered `re.sub` pairs), `remap_key`, `linux_to_windows_remappers` / `windows_to_linux_remappers` (generated windows↔linux bridge pairs), `file_quick_signature`
   - `store.py` — `SignatureStore`: JSON load/save (format identical to the historical `signature.json`), `query(paths, compute, save)` with compute-on-miss recording
 - `__init__.py` is documentation only; consumers import from the concrete modules (`from file_quick_signature.store import SignatureStore`).
 - Absolute imports only, never relative.

@@ -4,7 +4,9 @@ import re
 
 import pytest
 
-from file_quick_signature.key import build_key, parse_key
+from file_quick_signature.key import (apply_remappers, build_key,
+                                      linux_to_windows_remappers, parse_key,
+                                      windows_to_linux_remappers)
 from file_quick_signature.store import SignatureStore
 
 
@@ -266,6 +268,28 @@ class TestCrossPlatformBridging:
 
         expected_key = build_key(os.path.join(live_root, "img.jpg"), 11, 2500)
         assert store.data == {expected_key: "payload"}
+
+        payloads, not_found_idx, _ = store.query([str(f)])
+        assert payloads == ["payload"]
+        assert not_found_idx == []
+
+    def test_generated_remappers_bridge_foreign_cache(self, tmp_path):
+        """The generator functions bridge a cache keyed in the other OS's path
+        space: on Windows the live path is mapped into a Linux-built key space,
+        on Linux into a Windows-built one."""
+        f = _make_file(tmp_path / "pool" / "img.jpg", size=11, mtime_ns=2500)
+        real = os.path.realpath(str(f))
+        if os.name == "nt":
+            drive = os.path.splitdrive(real)[0]              # e.g. "C:"
+            linux_root = "/mnt/" + drive[0].lower()
+            pairs = windows_to_linux_remappers(drive, linux_root)
+        else:
+            linux_root = os.path.dirname(real)               # the pool directory
+            pairs = linux_to_windows_remappers(linux_root, "E:")
+        foreign_key = build_key(apply_remappers(real, pairs), 11, 2500)
+
+        store = SignatureStore(None, file_remappers=pairs)
+        store.data = {foreign_key: "payload"}
 
         payloads, not_found_idx, _ = store.query([str(f)])
         assert payloads == ["payload"]

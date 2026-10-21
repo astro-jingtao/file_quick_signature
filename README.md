@@ -53,7 +53,7 @@ For one relocated root configure either side, not both — the two sides transla
 
 ### Windows ↔ Linux example
 
-A cache built on Windows (`E:\pool\a.jpg` keys) used from a Linux mount, or vice versa, needs a prefix rewrite plus separator normalization:
+A cache built on Windows (`E:\pool\a.jpg` keys) used from a Linux mount, or vice versa, needs a prefix rewrite plus separator normalization. Write the pairs by hand:
 
 ```python
 # On Linux, files at /mnt/e/pool/... hit the Windows-built cache:
@@ -64,6 +64,23 @@ SignatureStore("/mnt/e/pool/signature.json",
 SignatureStore("/mnt/e/pool/signature.json",
                cache_remappers=[(r"^E:\\", "/mnt/e/"), (r"\\", "/")])
 ```
+
+…or generate them from the two roots (`key.py`), which also component-bounds the prefix rule so `/mnt/e2` does not catch `/mnt/e` rules:
+
+```python
+from file_quick_signature.key import (linux_to_windows_remappers,
+                                      windows_to_linux_remappers)
+
+# On Linux, files at /mnt/e/pool/... hit the Windows-built cache:
+SignatureStore("/mnt/e/pool/signature.json",
+               file_remappers=linux_to_windows_remappers("/mnt/e", "E:"))
+
+# Or migrate the cache keys into the live Linux space instead:
+SignatureStore("/mnt/e/pool/signature.json",
+               cache_remappers=windows_to_linux_remappers("E:", "/mnt/e"))
+```
+
+`linux_to_windows_remappers(linux_root, windows_root)` yields `[(r"^<linux_root>(?=/|$)", "<windows_root>"), (r"/", r"\\")]`; `windows_to_linux_remappers(windows_root, linux_root)` the inverse. `/` separators in the Windows root are accepted (`E:/pool` behaves as `E:\pool`); roots match exactly as given (drive-letter case included). Paths outside the root keep their prefix — only their separators are normalized. Both functions raise `ValueError` for a filesystem root (`/` or `\`).
 
 ## Development
 

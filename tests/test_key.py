@@ -4,7 +4,9 @@ import re
 import pytest
 
 from file_quick_signature.key import (SignatureKey, apply_remappers, build_key,
-                                      file_quick_signature, parse_key, remap_key)
+                                      file_quick_signature,
+                                      linux_to_windows_remappers, parse_key,
+                                      remap_key, windows_to_linux_remappers)
 
 
 class TestBuildAndParseRoundTrip:
@@ -144,3 +146,61 @@ class TestRemapKey:
     def test_idempotent_when_no_rule_matches(self):
         key = build_key(r"E:\pool\a.jpg", 5, 6)
         assert remap_key(key, [(r"^/mnt", r"/media")]) == key
+
+
+class TestPlatformBridgeRemappers:
+    """Generated windows<->linux bridge pairs: prefix swap + separator rewrite."""
+
+    def test_linux_to_windows(self):
+        pairs = linux_to_windows_remappers("/mnt/e", "E:")
+        assert apply_remappers("/mnt/e/pool/a.jpg", pairs) == r"E:\pool\a.jpg"
+        assert apply_remappers("/mnt/e", pairs) == "E:"
+
+    def test_windows_to_linux(self):
+        pairs = windows_to_linux_remappers("E:", "/mnt/e")
+        assert apply_remappers(r"E:\pool\a.jpg", pairs) == "/mnt/e/pool/a.jpg"
+        assert apply_remappers("E:", pairs) == "/mnt/e"
+
+    def test_round_trip_through_both_directions(self):
+        l2w = linux_to_windows_remappers("/mnt/e", r"E:\pool")
+        w2l = windows_to_linux_remappers(r"E:\pool", "/mnt/e")
+        for path in ("/mnt/e/a.jpg", "/mnt/e/deep/dir/img_1.png"):
+            assert apply_remappers(apply_remappers(path, l2w), w2l) == path
+
+    def test_remap_key_round_trip(self):
+        l2w = linux_to_windows_remappers("/mnt/e", "E:")
+        w2l = windows_to_linux_remappers("E:", "/mnt/e")
+        key = build_key("/mnt/e/pool/a.jpg", 98304, 133851860294701234)
+        assert remap_key(remap_key(key, l2w), w2l) == key
+
+    def test_deeper_roots(self):
+        # Roots deeper than a drive/mount point work the same way.
+        l2w = linux_to_windows_remappers("/mnt/e/data.v2", r"E:\Data (2024)")
+        assert apply_remappers("/mnt/e/data.v2/img.jpg", l2w) == r"E:\Data (2024)\img.jpg"
+        w2l = windows_to_linux_remappers(r"E:\Data (2024)", "/mnt/e/data.v2")
+        assert apply_remappers(r"E:\Data (2024)\img.jpg", w2l) == "/mnt/e/data.v2/img.jpg"
+
+    def test_regex_metachars_in_roots(self):
+        # Parentheses/dots in a root must not be read as regex syntax.
+        l2w = linux_to_windows_remappers("/mnt/e/my (data)/x.y", r"E:\pool")
+        assert apply_remappers("/mnt/e/my (data)/x.y/a.jpg", l2w) == r"E:\pool\a.jpg"
+
+    def test_sibling_prefix_not_rewritten(self):
+        # /mnt/e2 shares the textual prefix /mnt/e — the boundary lookahead
+        # must keep its prefix out of the swap (only separators normalize).
+        pairs = linux_to_windows_remappers("/mnt/e", "E:")
+        prefix_rule = pairs[0]
+        assert re.sub(prefix_rule[0], prefix_rule[1], "/mnt/e2/x.jpg") == "/mnt/e2/x.jpg"
+        assert apply_remappers("/mnt/e2/x.jpg", pairs) == r"\mnt\e2\x.jpg"
+
+    def test_forward_slash_windows_root_normalized(self):
+        assert (linux_to_windows_remappers("/mnt/e", "E:/pool")
+                == linux_to_windows_remappers("/mnt/e", r"E:\pool"))
+        assert (windows_to_linux_remappers("E:/pool", "/mnt/e")
+                == windows_to_linux_remappers(r"E:\pool", "/mnt/e"))
+
+    def test_filesystem_root_raises(self):
+        with pytest.raises(ValueError, match="named directory"):
+            linux_to_windows_remappers("/", "E:")
+        with pytest.raises(ValueError, match="named directory"):
+            windows_to_linux_remappers(r"E:\pool", "\\")

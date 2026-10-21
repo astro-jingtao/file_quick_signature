@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import NamedTuple, Optional, Sequence, Tuple
+from typing import List, NamedTuple, Optional, Sequence, Tuple
 
 # Key format: "{path}_{size}_{mtime_ns}", byte-identical to the historical
 # reference implementation (`f"{os.path.realpath(path)}_{st.st_size}_{st.st_mtime_ns}"`).
@@ -86,6 +86,80 @@ def remap_key(key: str,
     """Remap the path component of a key, keeping size and mtime_ns intact."""
     sig = parse_key(key)
     return build_key(apply_remappers(sig.path, remappers), sig.size, sig.mtime_ns)
+
+
+def _bridge_remappers(src_root: str, dst_root: str,
+                      src_sep: str, dst_sep: str) -> List[Tuple[str, str]]:
+    # Shared builder for the two direction-named functions below: a prefix-swap
+    # rule plus a separator-normalization rule, both built from the two roots.
+    src = src_root.rstrip(src_sep)
+    dst = dst_root.rstrip(dst_sep)
+    # A root made of separators alone (either flavor) is a filesystem root.
+    if not src.strip(src_sep + dst_sep) or not dst.strip(src_sep + dst_sep):
+        raise ValueError(
+            f"Cannot bridge {src_root!r} -> {dst_root!r}: a bridge root must "
+            f"be a named directory ('/mnt/e', 'E:'), not the filesystem root "
+            f"('/', '\\')")
+    # Replacement templates must double backslashes (re.sub template semantics).
+    return [
+        # Component-bounded prefix swap: the lookahead keeps sibling roots
+        # sharing a textual prefix (/mnt/e vs /mnt/e2) out of the rewrite.
+        ("^" + re.escape(src) + "(?=" + re.escape(src_sep) + "|$)",
+         dst.replace("\\", "\\\\")),
+        # Separator normalization for the rest of the path. The swapped-in
+        # dst prefix already uses dst separators, so it is unaffected.
+        (re.escape(src_sep), dst_sep.replace("\\", "\\\\")),
+    ]
+
+
+def linux_to_windows_remappers(linux_root: str,
+                               windows_root: str) -> List[Tuple[str, str]]:
+    r"""Regex pairs rewriting a Linux path under ``linux_root`` into its Windows
+    form under ``windows_root`` — for `SignatureStore(file_remappers=...)`
+    when a Windows-built cache is read from a Linux mount.
+
+    ``linux_to_windows_remappers("/mnt/e", "E:")`` yields rules equivalent to
+    ``[(r"^/mnt/e(?=/|$)", "E:"), (r"/", r"\\")]``: ``/mnt/e/pool/a.jpg`` is
+    keyed as ``E:\pool\a.jpg``, so live Linux lookups hit the Windows-built
+    cache. Sibling roots (``/mnt/e2/...``) keep their prefix; only their
+    separators are normalized. ``/`` separators in ``windows_root`` are
+    accepted (``E:/pool`` behaves as ``E:\pool``).
+
+    Roots are matched exactly as given (drive-letter case included) — write
+    them the way they appear in the cache keys / live paths.
+
+    Raises
+    ------
+    ValueError
+        If either root is the filesystem root itself (normalizes to ``/`` or
+        ``\``) — bridge between named roots instead.
+    """
+    return _bridge_remappers(linux_root, windows_root.replace("/", "\\"), "/", "\\")
+
+
+def windows_to_linux_remappers(windows_root: str,
+                               linux_root: str) -> List[Tuple[str, str]]:
+    r"""Regex pairs rewriting a Windows path under ``windows_root`` into its
+    Linux form under ``linux_root`` — for `SignatureStore(cache_remappers=...)`
+    migrating Windows-built keys into the live Linux path space (the inverse
+    of `linux_to_windows_remappers`; also usable as ``file_remappers`` to key
+    live Windows files into a Linux-built cache).
+
+    ``windows_to_linux_remappers("E:", "/mnt/e")`` yields rules equivalent to
+    ``[(r"^E:(?=\\|$)", "/mnt/e"), (r"\\", "/")]``: the stored key
+    ``E:\pool\a.jpg`` is read as ``/mnt/e/pool/a.jpg``. ``/`` separators in
+    ``windows_root`` are accepted (``E:/pool`` behaves as ``E:\pool``).
+
+    Roots are matched exactly as given (drive-letter case included) — write
+    them the way they appear in the cache keys / live paths.
+
+    Raises
+    ------
+    ValueError
+        If either root is the filesystem root itself (normalizes to ``/`` or
+        ``\``) — bridge between named roots instead.
+    """
+    return _bridge_remappers(windows_root.replace("/", "\\"), linux_root, "\\", "/")
 
 
 def file_quick_signature(path: str,
