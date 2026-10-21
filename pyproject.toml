@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "file_quick_signature"
 version = "0.0.1"
 description = "A quick-change file signature (path, size, mtime_ns) key cache with key reverse-parsing, cross-platform path remapping, and JSON persistence."
+readme = "README.md"
 requires-python = ">=3.9"
 authors = [
     { name = "Tao Jing", email = "tao.jing.astro@gmail.com" },

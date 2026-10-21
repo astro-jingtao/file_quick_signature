@@ -8,11 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-Windows/PowerShell environment. Tests run in the `science` conda env (the one with this package installed editable); always use `conda run -n science python ...`.
-
 - Install (editable): `pip install -e . --no-build-isolation`
-- All tests: `conda run -n science python -m pytest tests/ -q`
-- One test: `conda run -n science python -m pytest tests/test_store.py::TestQuery::test_hit_and_miss -v`
+- All tests: `python -m pytest tests/ -q`
+- One test: `python -m pytest tests/test_store.py::TestQuery::test_hit_and_miss -v`
 - No linter or formatter is configured.
 
 ## Architecture
