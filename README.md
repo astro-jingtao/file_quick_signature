@@ -91,5 +91,5 @@ SignatureStore("/mnt/e/pool/signature.json",
 Tests (class-based pytest, stdlib-only package):
 
 ```bash
-conda run -n science python -m pytest tests/ -q
+python -m pytest tests/ -q
 ```
