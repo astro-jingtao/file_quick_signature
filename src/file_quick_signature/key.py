@@ -191,7 +191,7 @@ def file_quick_signature(path: str,
     Raises
     ------
     FileNotFoundError
-        If the path does not exist or is not a file.
+        If the path does not exist.
     OSError
         For other system-level errors during stat.
     """
