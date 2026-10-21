@@ -204,3 +204,10 @@ class TestPlatformBridgeRemappers:
             linux_to_windows_remappers("/", "E:")
         with pytest.raises(ValueError, match="named directory"):
             windows_to_linux_remappers(r"E:\pool", "\\")
+
+    def test_trailing_separator_roots(self):
+        # A trailing separator on either root is stripped; the rules are identical.
+        assert (linux_to_windows_remappers("/mnt/e/", "E:\\")
+                == linux_to_windows_remappers("/mnt/e", "E:"))
+        assert (windows_to_linux_remappers("E:\\", "/mnt/e/")
+                == windows_to_linux_remappers("E:", "/mnt/e"))

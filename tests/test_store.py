@@ -56,6 +56,13 @@ class TestLoadSave:
         with pytest.raises(ValueError, match="json_path"):
             store.save()
 
+    def test_load_corrupt_json_raises(self, tmp_path):
+        # A damaged cache file must fail loudly, not load as empty.
+        json_path = tmp_path / "signature.json"
+        json_path.write_text("{not json", encoding="utf-8")
+        with pytest.raises(json.JSONDecodeError):
+            SignatureStore(str(json_path)).load()
+
     def test_save_format_matches_historical(self, tmp_path):
         """indent=4, ensure_ascii=False — same formatting as the old signature.json."""
         json_path = str(tmp_path / "signature.json")
@@ -66,6 +73,10 @@ class TestLoadSave:
             text = f.read()
         assert text.startswith('{\n    "E:\\\\平\\\\a.jpg_1_2"')
         assert '平' in text  # not \u-escaped
+
+        # Non-ASCII keys survive a full disk round-trip, not just the text form.
+        reloaded = SignatureStore(json_path).load()
+        assert reloaded.data == store.data
 
 
 class TestQuery:
@@ -136,6 +147,14 @@ class TestQuery:
         results, not_found_idx, _ = store.query(paths, compute=compute)
         assert results == ["h", "h"]
         assert not_found_idx == []
+
+    def test_empty_paths(self, tmp_path):
+        store, _ = self._prepare(tmp_path)
+
+        def compute(ps):
+            raise AssertionError("must not be called for an empty query")
+
+        assert store.query([], compute=compute) == ([], [], [])
 
 
 class TestFileRemappers:
@@ -231,6 +250,42 @@ class TestCacheRemappers:
 
         store = SignatureStore(str(json_path)).load()
         assert store.data == {stored_key: "payload"}
+
+    def test_both_sides_same_prefix_misses(self, tmp_path):
+        """Docstring/README claim: file and cache remappers for one prefix
+        translate in opposite directions and make lookups miss."""
+        cache_root, live_root, f, stored_key = self._scenario(tmp_path)
+        json_path = tmp_path / "signature.json"
+        json_path.write_text(json.dumps({stored_key: "payload"}), encoding="utf-8")
+
+        store = SignatureStore(str(json_path),
+                               file_remappers=[(re.escape(str(live_root)),
+                                                _repl_literal(str(cache_root)))],
+                               cache_remappers=[(re.escape(str(cache_root)),
+                                                 _repl_literal(str(live_root)))]).load()
+        # load() migrated the stored key into the live space; the file rule
+        # maps the live path back into the cache space — the two cancel to a miss.
+        results, not_found_idx, _ = store.query([str(f)])
+        assert results == [None]
+        assert not_found_idx == [0]
+
+    def test_remap_collision_later_entry_wins(self, tmp_path):
+        cache_root, live_root, f, stored_key = self._scenario(tmp_path)
+        mtime = os.stat(str(f)).st_mtime_ns
+        # A second stored key that remaps onto the same live key; the later
+        # JSON entry wins the collision.
+        colliding = build_key(os.path.join(str(tmp_path), "other", "aa", "cc"), 9, mtime)
+        json_path = tmp_path / "signature.json"
+        json_path.write_text(json.dumps({stored_key: "first", colliding: "second"}),
+                             encoding="utf-8")
+
+        store = SignatureStore(str(json_path),
+                               cache_remappers=[(re.escape(str(cache_root)),
+                                                 _repl_literal(str(live_root))),
+                                                (re.escape(str(tmp_path / "other")),
+                                                 _repl_literal(str(live_root)))]).load()
+        expected_key = build_key(os.path.join(str(live_root), "aa", "cc"), 9, mtime)
+        assert store.data == {expected_key: "second"}
 
 
 class TestCrossPlatformBridging:
