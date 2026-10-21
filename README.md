@@ -1,0 +1,74 @@
+# file_quick_signature
+
+A quick-change file signature key cache: keys of the form `{path}_{size}_{mtime_ns}` detect file modifications without reading file contents, and a JSON-backed store maps those keys to arbitrary payloads (content hashes, embeddings, ...) so unchanged files skip re-processing. Keys are byte-identical with the historical ones, so existing `signature.json` caches keep working.
+
+Works on Windows and Linux alike — pure `os`/`json`/`re`, no platform-specific code. Cross-machine caches (different roots or separators) are reconciled with regex path remapping.
+
+## Install
+
+Editable:
+
+```bash
+pip install -e . --no-build-isolation
+```
+
+## Keys: build, reverse-parse
+
+`file_quick_signature.path` owns the key grammar:
+
+```python
+from file_quick_signature.key import file_quick_signature, parse_key
+
+key = file_quick_signature(r"E:\pool\a.jpg")   # "E:\\pool\\a.jpg_98304_133851860294701234"
+sig = parse_key(key)                            # SignatureKey(path=..., size=98304, mtime_ns=133851860294701234)
+sig.path, sig.size, sig.mtime_ns                # the constituent quantities
+```
+
+The key is `"{realpath}_{st_size}_{st_mtime_ns}"` — same bytes the historical implementation produced. `parse_key` reverses it by splitting on the last two separators, so underscores inside paths are safe. Raises `ValueError` on malformed keys.
+
+## Store: query with compute-on-miss
+
+```python
+from file_quick_signature.store import SignatureStore
+
+store = SignatureStore("E:/pool/signature.json").load()
+payloads, not_found_idx, not_found_sign = store.query(
+    img_paths, compute=my_batch_hash)   # misses -> my_batch_hash(paths), recorded + saved
+```
+
+- `compute(miss_paths) -> payloads` is called once with the missed paths (e.g. a batch hashing function); its results fill the return list and are recorded.
+- `query` without `compute` is a pure lookup that never saves.
+- `save=False` records in memory only (the historical `clean_cache` semantics).
+- Missing JSON file loads as an empty store; `json_path=None` is in-memory only and `save()` raises.
+
+## Path remapping (regex)
+
+Both remap sides take an ordered list of `(pattern, replacement)` regex pairs applied with `re.sub` in list order (later rules see earlier output). A Windows path used as a *replacement* must double its backslashes: `path.replace("\\", "\\\\")` — a lone `\U`/`\A` in a replacement template is an escape error.
+
+**File-side** (`file_remappers`) rewrites a live file's path before its key is built — new lookups and new records stay in the cache's path space. Rule `("xxx/yyy", "ccc")`: the file `xxx/yyy/aa/cc` is looked up (and recorded) as `ccc/aa/cc`.
+
+**Cache-side** (`cache_remappers`) rewrites the path component of *stored keys* at `load()` — old keys migrate into the live path space (persists on next `save`; on collision the later entry wins). Rule `("ccc", "xxx/yyy")`: the stored key `ccc/aa/cc` becomes `xxx/yyy/aa/cc`.
+
+For one relocated root configure either side, not both — the two sides translate in opposite directions, and both active for the same prefix make lookups miss.
+
+### Windows ↔ Linux example
+
+A cache built on Windows (`E:\pool\a.jpg` keys) used from a Linux mount, or vice versa, needs a prefix rewrite plus separator normalization:
+
+```python
+# On Linux, files at /mnt/e/pool/... hit the Windows-built cache:
+SignatureStore("/mnt/e/pool/signature.json",
+               file_remappers=[(r"^/mnt/e", "E:"), (r"/", r"\\")])
+
+# Or migrate the cache keys into the live Linux space instead:
+SignatureStore("/mnt/e/pool/signature.json",
+               cache_remappers=[(r"^E:\\", "/mnt/e/"), (r"\\", "/")])
+```
+
+## Development
+
+Tests (class-based pytest, stdlib-only package):
+
+```bash
+conda run -n science python -m pytest tests/ -q
+```
