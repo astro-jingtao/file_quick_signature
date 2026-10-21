@@ -82,48 +82,60 @@ class SignatureStore:
               compute: Optional[Callable[[Sequence[str]], Sequence[Any]]] = None,
               save: bool = True):
         """
-        Look up payloads for ``paths``, computing and recording misses.
+        Look up the stored payload of every path, computing and recording misses.
+
+        For each path the store builds its quick-signature key (under
+        `file_remappers`) and fetches the payload recorded for that key. A
+        path whose key is not in the store is a miss; when ``compute`` is
+        given, all misses are passed to it in one batch, and its payloads
+        fill the missing slots and are recorded in the store.
 
         Parameters
         ----------
         paths : list[str]
             File paths to query.
         compute : callable, optional
-            ``compute(miss_paths) -> payloads`` — invoked once with the paths
-            whose keys missed (e.g. a batch hash function). Its payloads fill
-            the result list and are recorded in the store.
+            ``compute(miss_paths) -> payloads`` — invoked once, with the
+            paths whose keys missed, in query order (e.g. a batch hash
+            function); it must return one payload per missed path, in the
+            same order. When None, misses stay None in the results and the
+            store is left untouched.
         save : bool
-            Whether to persist the store after recording computed payloads.
-            Ignored when ``compute`` is None (a pure query never saves).
+            Whether to persist the store to disk after recording computed
+            payloads. Ignored when ``compute`` is None (a pure query never
+            saves).
 
         Returns
         -------
         tuple
-            ``(payloads, not_found_idx, not_found_sign)`` — payloads aligned
-            with ``paths`` (None for misses when ``compute`` is None), the
-            indices of misses, and their keys (post file-remap).
+            ``(results, not_found_idx, not_found_keys)`` — ``results`` is
+            the payload list aligned 1:1 with ``paths``: the stored payload
+            for a hit, the computed payload for a miss with ``compute``,
+            None for a miss without. ``not_found_idx`` holds the indices
+            (into ``paths``) of the missed paths, ``not_found_keys`` their
+            looked-up keys (post file-remap).
         """
-        payloads: list = []
+        results: list = []
         not_found_idx: List[int] = []
-        not_found_sign: List[str] = []
-        for i, img_path in enumerate(paths):
-            this_sign = self.signature(img_path)
-            this_payload = self.data.get(this_sign, None)
+        not_found_keys: List[str] = []
+        for i, path in enumerate(paths):
+            this_key = self.signature(path)
+            this_payload = self.data.get(this_key, None)
             if this_payload is None:
                 not_found_idx.append(i)
-                not_found_sign.append(this_sign)
+                not_found_keys.append(this_key)
 
-            payloads.append(this_payload)
+            results.append(this_payload)
 
         if not_found_idx and compute is not None:
             new_paths = [paths[i] for i in not_found_idx]
             new_payloads = compute(new_paths)
 
             for i_new, i_all in enumerate(not_found_idx):
-                payloads[i_all] = new_payloads[i_new]
-                self.data[not_found_sign[i_new]] = new_payloads[i_new]
+                results[i_all] = new_payloads[i_new]
+                self.data[not_found_keys[i_new]] = new_payloads[i_new]
 
             if save:
                 self.save()
 
-        return payloads, not_found_idx, not_found_sign
+        return results, not_found_idx, not_found_keys

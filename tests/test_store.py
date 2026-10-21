@@ -81,12 +81,12 @@ class TestQuery:
         h1 = _sha(b"xxx")
         store.data[store.signature(paths[0])] = h1
 
-        payloads, not_found_idx, not_found_sign = store.query(paths)
+        results, not_found_idx, not_found_keys = store.query(paths)
 
-        assert payloads[0] == h1
-        assert payloads[1] is None
+        assert results[0] == h1
+        assert results[1] is None
         assert not_found_idx == [1]
-        assert not_found_sign == [store.signature(paths[1])]
+        assert not_found_keys == [store.signature(paths[1])]
 
     def test_compute_records_and_saves(self, tmp_path):
         json_path = str(tmp_path / "signature.json")
@@ -100,9 +100,9 @@ class TestQuery:
             assert miss_paths == [paths[1]]
             return [h2]
 
-        payloads, not_found_idx, _ = store.query(paths, compute=compute)
+        results, not_found_idx, _ = store.query(paths, compute=compute)
 
-        assert payloads == [h1, h2]
+        assert results == [h1, h2]
         assert not_found_idx == [1]
         assert store.data[store.signature(paths[1])] == h2
         # persisted
@@ -112,7 +112,7 @@ class TestQuery:
     def test_compute_none_leaves_store_untouched(self, tmp_path):
         store, paths = self._prepare(tmp_path)
         before = dict(store.data)
-        payloads, not_found_idx, _ = store.query(paths)
+        results, not_found_idx, _ = store.query(paths)
         assert not_found_idx == [0, 1]
         assert store.data == before
 
@@ -121,9 +121,9 @@ class TestQuery:
         store, paths = self._prepare(tmp_path)
         store.json_path = json_path
 
-        payloads, _, _ = store.query(paths, compute=lambda ps: ["h"] * len(ps), save=False)
+        results, _, _ = store.query(paths, compute=lambda ps: ["h"] * len(ps), save=False)
 
-        assert payloads == ["h", "h"]
+        assert results == ["h", "h"]
         assert not os.path.exists(json_path)
 
     def test_full_hit_no_compute_call(self, tmp_path):
@@ -133,8 +133,8 @@ class TestQuery:
         def compute(ps):
             raise AssertionError("must not be called when everything hits")
 
-        payloads, not_found_idx, _ = store.query(paths, compute=compute)
-        assert payloads == ["h", "h"]
+        results, not_found_idx, _ = store.query(paths, compute=compute)
+        assert results == ["h", "h"]
         assert not_found_idx == []
 
 
@@ -157,8 +157,8 @@ class TestFileRemappers:
                                                 _repl_literal(str(cache_root)))])
         store.data = {cache_key: "payload"}
 
-        payloads, not_found_idx, _ = store.query([str(f)])
-        assert payloads == ["payload"]
+        results, not_found_idx, _ = store.query([str(f)])
+        assert results == ["payload"]
         assert not_found_idx == []
 
     def test_miss_records_under_remapped_key(self, tmp_path):
@@ -205,8 +205,8 @@ class TestCacheRemappers:
             os.stat(str(f)).st_mtime_ns)
         assert store.data == {expected_key: "payload"}
 
-        payloads, not_found_idx, _ = store.query([str(f)])
-        assert payloads == ["payload"]
+        results, not_found_idx, _ = store.query([str(f)])
+        assert results == ["payload"]
         assert not_found_idx == []
 
     def test_rename_persists_on_save(self, tmp_path):
@@ -249,8 +249,8 @@ class TestCrossPlatformBridging:
         store = SignatureStore(None, file_remappers=rules)
         store.data = {linux_key: "payload"}
 
-        payloads, not_found_idx, _ = store.query([str(f)])
-        assert payloads == ["payload"]
+        results, not_found_idx, _ = store.query([str(f)])
+        assert results == ["payload"]
         assert not_found_idx == []
 
     def test_linux_built_cache_remapped_to_live_paths(self, tmp_path):
@@ -269,8 +269,8 @@ class TestCrossPlatformBridging:
         expected_key = build_key(os.path.join(live_root, "img.jpg"), 11, 2500)
         assert store.data == {expected_key: "payload"}
 
-        payloads, not_found_idx, _ = store.query([str(f)])
-        assert payloads == ["payload"]
+        results, not_found_idx, _ = store.query([str(f)])
+        assert results == ["payload"]
         assert not_found_idx == []
 
     def test_generated_remappers_bridge_foreign_cache(self, tmp_path):
@@ -291,6 +291,6 @@ class TestCrossPlatformBridging:
         store = SignatureStore(None, file_remappers=pairs)
         store.data = {foreign_key: "payload"}
 
-        payloads, not_found_idx, _ = store.query([str(f)])
-        assert payloads == ["payload"]
+        results, not_found_idx, _ = store.query([str(f)])
+        assert results == ["payload"]
         assert not_found_idx == []

@@ -28,15 +28,19 @@ The key is `"{realpath}_{st_size}_{st_mtime_ns}"` — same bytes the historical 
 
 ## Store: query with compute-on-miss
 
+`query` returns, for every input path in order, the payload the store has recorded for that path's quick-signature key:
+
 ```python
 from file_quick_signature.store import SignatureStore
 
 store = SignatureStore("E:/pool/signature.json").load()
-payloads, not_found_idx, not_found_sign = store.query(
+results, not_found_idx, not_found_keys = store.query(
     img_paths, compute=my_batch_hash)   # misses -> my_batch_hash(paths), recorded + saved
 ```
 
-- `compute(miss_paths) -> payloads` is called once with the missed paths (e.g. a batch hashing function); its results fill the return list and are recorded.
+- `results` — one entry per input path, aligned 1:1: the stored payload on a hit, the computed payload on a miss (when `compute` is given), None on a miss without `compute`.
+- `compute(miss_paths) -> payloads` is called once, with all missed paths in query order (e.g. a batch hashing function); it returns one payload per missed path, in the same order. Those payloads fill the missing slots in `results` and are recorded in the store.
+- `not_found_idx` / `not_found_keys` — the indices (into the input list) of the paths that missed, and the keys they were looked up under (post file-remap).
 - `query` without `compute` is a pure lookup that never saves.
 - `save=False` records in memory only (the historical `clean_cache` semantics).
 - Missing JSON file loads as an empty store; `json_path=None` is in-memory only and `save()` raises.
