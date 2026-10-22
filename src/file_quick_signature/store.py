@@ -70,8 +70,12 @@ class SignatureStore:
     def save(self) -> None:
         if self.json_path is None:
             raise ValueError("SignatureStore has no json_path; cannot save")
-        with open(self.json_path, "w", encoding="utf-8") as f:
+        # Write to a sibling temp file and atomically replace, so a crash
+        # mid-write cannot truncate an existing cache.
+        tmp_path = self.json_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(self.data, f, ensure_ascii=False, indent=4)
+        os.replace(tmp_path, self.json_path)
 
     def signature(self, path: str) -> str:
         """Quick-signature key for a live file path, under `file_remappers`."""
@@ -113,7 +117,9 @@ class SignatureStore:
             for a hit, the computed payload for a miss with ``compute``,
             None for a miss without. ``not_found_idx`` holds the indices
             (into ``paths``) of the missed paths, ``not_found_keys`` their
-            looked-up keys (post file-remap).
+            looked-up keys (post file-remap). A stored JSON ``null`` payload
+            is indistinguishable from a miss (both surface as None), so
+            payloads should not be None.
         """
         results: list = []
         not_found_idx: List[int] = []

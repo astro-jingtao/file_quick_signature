@@ -63,6 +63,25 @@ class TestLoadSave:
         with pytest.raises(json.JSONDecodeError):
             SignatureStore(str(json_path)).load()
 
+    def test_save_atomic_no_temp_left_behind(self, tmp_path):
+        json_path = str(tmp_path / "signature.json")
+        store = SignatureStore(json_path)
+        store.data = {"k": "v"}
+        store.save()
+        assert not os.path.exists(json_path + ".tmp")
+        reloaded = SignatureStore(json_path).load()
+        assert reloaded.data == {"k": "v"}
+
+    def test_save_replaces_existing_cache(self, tmp_path):
+        json_path = str(tmp_path / "signature.json")
+        store = SignatureStore(json_path)
+        store.data = {"old": "1"}
+        store.save()
+        store.data = {"new": "2"}
+        store.save()
+        assert SignatureStore(json_path).load().data == {"new": "2"}
+        assert not os.path.exists(json_path + ".tmp")
+
     def test_save_format_matches_historical(self, tmp_path):
         """indent=4, ensure_ascii=False — same formatting as the old signature.json."""
         json_path = str(tmp_path / "signature.json")
