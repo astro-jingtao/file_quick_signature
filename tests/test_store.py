@@ -334,10 +334,15 @@ class TestCrossPlatformBridging:
         json_path = tmp_path / "signature.json"
         json_path.write_text(json.dumps({linux_key: "payload"}), encoding="utf-8")
 
-        live_root = str(f.parent)
+        live_root = os.path.realpath(str(f.parent))
         # Prefix rewrite, then separator normalization — the same rules a real
-        # Linux-built cache needs to land on Windows-native live keys.
-        rules = [(r"^/mnt/e/pool", _repl_literal(live_root)), (r"/", "\\\\")]
+        # Linux-built cache needs to land on Windows-native live keys. The
+        # separator rule is needed only where the host's native separator is
+        # not "/"; on a POSIX host the cache's separators are already native
+        # and rewriting them would corrupt the substituted live path.
+        rules = [(r"^/mnt/e/pool", _repl_literal(live_root))]
+        if os.name == "nt":
+            rules.append((r"/", "\\\\"))
         store = SignatureStore(str(json_path), cache_remappers=rules).load()
 
         expected_key = build_key(os.path.join(live_root, "img.jpg"), 11, 2500)
