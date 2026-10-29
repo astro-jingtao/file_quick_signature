@@ -93,3 +93,10 @@ Tests (class-based pytest, stdlib-only package):
 ```bash
 python -m pytest tests/ -q
 ```
+
+Lint and format check (ruff, configured in `ruff.toml`):
+
+```bash
+ruff check .
+ruff format --check .
+```

@@ -11,7 +11,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Install (editable): `pip install -e . --no-build-isolation`
 - All tests: `python -m pytest tests/ -q`
 - One test: `python -m pytest tests/test_store.py::TestQuery::test_hit_and_miss -v`
-- No linter or formatter is configured.
+- Lint: `ruff check .`
+- Format check: `ruff format --check .` (apply with `ruff format .`)
 
 ## Architecture
 
