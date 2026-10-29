@@ -1,12 +1,16 @@
+import hashlib
 import json
 import os
 import re
 
 import pytest
 
-from file_quick_signature.key import (apply_remappers, build_key,
-                                      linux_to_windows_remappers, parse_key,
-                                      windows_to_linux_remappers)
+from file_quick_signature.key import (
+    apply_remappers,
+    build_key,
+    linux_to_windows_remappers,
+    windows_to_linux_remappers,
+)
 from file_quick_signature.store import SignatureStore
 
 
@@ -20,7 +24,6 @@ def _make_file(path, size=10, mtime_ns=None):
 
 
 def _sha(payload: bytes) -> str:
-    import hashlib
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -44,7 +47,7 @@ class TestLoadSave:
         store.data = {"k1": "v1", "k2": "v2"}
         store.save()
 
-        with open(json_path, "r", encoding="utf-8") as f:
+        with open(json_path, encoding="utf-8") as f:
             assert json.load(f) == {"k1": "v1", "k2": "v2"}
 
         reloaded = SignatureStore(json_path).load()
@@ -88,7 +91,7 @@ class TestLoadSave:
         store = SignatureStore(json_path)
         store.data = {build_key(r"E:\平\a.jpg", 1, 2): "h" * 64}
         store.save()
-        with open(json_path, "r", encoding="utf-8") as f:
+        with open(json_path, encoding="utf-8") as f:
             text = f.read()
         assert text.startswith('{\n    "E:\\\\平\\\\a.jpg_1_2"')
         assert '平' in text  # not \u-escaped
@@ -136,13 +139,13 @@ class TestQuery:
         assert not_found_idx == [1]
         assert store.data[store.signature(paths[1])] == h2
         # persisted
-        with open(json_path, "r", encoding="utf-8") as f:
+        with open(json_path, encoding="utf-8") as f:
             assert json.load(f) == store.data
 
     def test_compute_none_leaves_store_untouched(self, tmp_path):
         store, paths = self._prepare(tmp_path)
         before = dict(store.data)
-        results, not_found_idx, _ = store.query(paths)
+        _results, not_found_idx, _ = store.query(paths)
         assert not_found_idx == [0, 1]
         assert store.data == before
 
@@ -248,7 +251,7 @@ class TestCacheRemappers:
         assert not_found_idx == []
 
     def test_rename_persists_on_save(self, tmp_path):
-        cache_root, live_root, f, stored_key = self._scenario(tmp_path)
+        cache_root, live_root, _f, stored_key = self._scenario(tmp_path)
         json_path = tmp_path / "signature.json"
         json_path.write_text(json.dumps({stored_key: "payload"}), encoding="utf-8")
 
@@ -257,13 +260,13 @@ class TestCacheRemappers:
                                                  _repl_literal(str(live_root)))]).load()
         store.save()
 
-        with open(json_path, "r", encoding="utf-8") as f_json:
+        with open(json_path, encoding="utf-8") as f_json:
             persisted = json.load(f_json)
         assert list(persisted) == list(store.data)
         assert stored_key not in persisted
 
     def test_no_cache_remappers_keeps_keys_verbatim(self, tmp_path):
-        cache_root, live_root, f, stored_key = self._scenario(tmp_path)
+        _cache_root, _live_root, _f, stored_key = self._scenario(tmp_path)
         json_path = tmp_path / "signature.json"
         json_path.write_text(json.dumps({stored_key: "payload"}), encoding="utf-8")
 

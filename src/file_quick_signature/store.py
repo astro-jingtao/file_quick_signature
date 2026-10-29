@@ -1,13 +1,16 @@
+"""JSON-backed cache mapping quick-signature keys to computed payloads."""
+
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 import json
 import os
-from typing import Any, Callable, List, Optional, Sequence, Tuple
+from typing import Any, Optional
 
 from file_quick_signature.key import file_quick_signature, remap_key
 
 # A remapper is a (pattern, replacement) regex pair; lists are applied in order.
-FileRemappers = Optional[Sequence[Tuple[str, str]]]
+FileRemappers = Optional[Sequence[tuple[str, str]]]
 
 
 class SignatureStore:
@@ -44,19 +47,20 @@ class SignatureStore:
     """
 
     def __init__(self,
-                 json_path: Optional[str] = None,
+                 json_path: str | None = None,
                  file_remappers: FileRemappers = None,
-                 cache_remappers: FileRemappers = None):
+                 cache_remappers: FileRemappers = None) -> None:
+        """Initialize the store; parameters are documented in the class docstring."""
         self.json_path = json_path
-        self.file_remappers: List[Tuple[str, str]] = list(file_remappers or [])
-        self.cache_remappers: List[Tuple[str, str]] = list(cache_remappers or [])
+        self.file_remappers: list[tuple[str, str]] = list(file_remappers or [])
+        self.cache_remappers: list[tuple[str, str]] = list(cache_remappers or [])
         self.data: dict = {}
 
-    def load(self) -> "SignatureStore":
+    def load(self) -> SignatureStore:
         """Read the JSON file (a missing file yields an empty store), then apply
         `cache_remappers` to rename stored keys into the live path space."""
         if self.json_path is not None and os.path.exists(self.json_path):
-            with open(self.json_path, "r", encoding="utf-8") as f:
+            with open(self.json_path, encoding="utf-8") as f:
                 raw = json.load(f)
         else:
             raw = {}
@@ -68,10 +72,15 @@ class SignatureStore:
         return self
 
     def save(self) -> None:
+        """Persist the store to `json_path` atomically (temp file + replace).
+
+        Raises
+        ------
+        ValueError
+            If the store was created without a `json_path`.
+        """
         if self.json_path is None:
             raise ValueError("SignatureStore has no json_path; cannot save")
-        # Write to a sibling temp file and atomically replace, so a crash
-        # mid-write cannot truncate an existing cache.
         tmp_path = self.json_path + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(self.data, f, ensure_ascii=False, indent=4)
@@ -83,8 +92,8 @@ class SignatureStore:
 
     def query(self,
               paths: Sequence[str],
-              compute: Optional[Callable[[Sequence[str]], Sequence[Any]]] = None,
-              save: bool = True):
+              compute: Callable[[Sequence[str]], Sequence[Any]] | None = None,
+              save: bool = True) -> tuple[list[Any], list[int], list[str]]:
         """
         Look up the stored payload of every path, computing and recording misses.
 
@@ -122,8 +131,8 @@ class SignatureStore:
             payloads should not be None.
         """
         results: list = []
-        not_found_idx: List[int] = []
-        not_found_keys: List[str] = []
+        not_found_idx: list[int] = []
+        not_found_keys: list[str] = []
         for i, path in enumerate(paths):
             this_key = self.signature(path)
             this_payload = self.data.get(this_key, None)

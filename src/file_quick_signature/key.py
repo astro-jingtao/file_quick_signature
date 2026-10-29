@@ -1,8 +1,11 @@
+"""Quick-signature key grammar: build, reverse-parse, and remap path components."""
+
 from __future__ import annotations
 
+from collections.abc import Sequence
 import os
 import re
-from typing import List, NamedTuple, Optional, Sequence, Tuple
+from typing import NamedTuple
 
 # Key format: "{path}_{size}_{mtime_ns}", byte-identical to the historical
 # reference implementation (`f"{os.path.realpath(path)}_{st.st_size}_{st.st_mtime_ns}"`).
@@ -27,7 +30,7 @@ def build_key(path: str, size: int, mtime_ns: int) -> str:
 
 def _parse_int_field(text: str, key: str, field: str) -> int:
     # Optional leading '-' keeps pre-1970 (negative) mtimes parsable.
-    body = text[1:] if text.startswith("-") else text
+    body = text.removeprefix("-")
     if not body.isdigit():
         raise ValueError(
             f"Malformed quick-signature key {key!r}: {field} field {text!r} is not an integer")
@@ -66,7 +69,7 @@ def parse_key(key: str) -> SignatureKey:
 
 
 def apply_remappers(path: str,
-                    remappers: Optional[Sequence[Tuple[str, str]]]) -> str:
+                    remappers: Sequence[tuple[str, str]] | None) -> str:
     """
     Apply an ordered list of ``(pattern, replacement)`` regex pairs to a path.
 
@@ -82,14 +85,14 @@ def apply_remappers(path: str,
 
 
 def remap_key(key: str,
-              remappers: Optional[Sequence[Tuple[str, str]]]) -> str:
+              remappers: Sequence[tuple[str, str]] | None) -> str:
     """Remap the path component of a key, keeping size and mtime_ns intact."""
     sig = parse_key(key)
     return build_key(apply_remappers(sig.path, remappers), sig.size, sig.mtime_ns)
 
 
 def _bridge_remappers(src_root: str, dst_root: str,
-                      src_sep: str, dst_sep: str) -> List[Tuple[str, str]]:
+                      src_sep: str, dst_sep: str) -> list[tuple[str, str]]:
     # Shared builder for the two direction-named functions below: a prefix-swap
     # rule plus a separator-normalization rule, both built from the two roots.
     src = src_root.rstrip(src_sep)
@@ -113,7 +116,7 @@ def _bridge_remappers(src_root: str, dst_root: str,
 
 
 def linux_to_windows_remappers(linux_root: str,
-                               windows_root: str) -> List[Tuple[str, str]]:
+                               windows_root: str) -> list[tuple[str, str]]:
     r"""Regex pairs rewriting a Linux path under ``linux_root`` into its Windows
     form under ``windows_root`` — for `SignatureStore(file_remappers=...)`
     when a Windows-built cache is read from a Linux mount.
@@ -138,7 +141,7 @@ def linux_to_windows_remappers(linux_root: str,
 
 
 def windows_to_linux_remappers(windows_root: str,
-                               linux_root: str) -> List[Tuple[str, str]]:
+                               linux_root: str) -> list[tuple[str, str]]:
     r"""Regex pairs rewriting a Windows path under ``windows_root`` into its
     Linux form under ``linux_root`` — for `SignatureStore(cache_remappers=...)`
     migrating Windows-built keys into the live Linux path space (the inverse
@@ -163,7 +166,7 @@ def windows_to_linux_remappers(windows_root: str,
 
 
 def file_quick_signature(path: str,
-                         remappers: Optional[Sequence[Tuple[str, str]]] = None) -> str:
+                         remappers: Sequence[tuple[str, str]] | None = None) -> str:
     """
     Return a quick-change fingerprint for the given file.
     The key "{canonical_path}_{size}_{mtime_ns}" can be stored and later

@@ -3,10 +3,16 @@ import re
 
 import pytest
 
-from file_quick_signature.key import (SignatureKey, apply_remappers, build_key,
-                                      file_quick_signature,
-                                      linux_to_windows_remappers, parse_key,
-                                      remap_key, windows_to_linux_remappers)
+from file_quick_signature.key import (
+    SignatureKey,
+    apply_remappers,
+    build_key,
+    file_quick_signature,
+    linux_to_windows_remappers,
+    parse_key,
+    remap_key,
+    windows_to_linux_remappers,
+)
 
 
 class TestBuildAndParseRoundTrip:
