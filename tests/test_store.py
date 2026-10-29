@@ -33,7 +33,6 @@ def _repl_literal(text: str) -> str:
 
 
 class TestLoadSave:
-
     def test_load_missing_file_empty(self, tmp_path):
         store = SignatureStore(str(tmp_path / "signature.json")).load()
         assert store.data == {}
@@ -94,7 +93,7 @@ class TestLoadSave:
         with open(json_path, encoding="utf-8") as f:
             text = f.read()
         assert text.startswith('{\n    "E:\\\\平\\\\a.jpg_1_2"')
-        assert '平' in text  # not \u-escaped
+        assert "平" in text  # not \u-escaped
 
         # Non-ASCII keys survive a full disk round-trip, not just the text form.
         reloaded = SignatureStore(json_path).load()
@@ -102,7 +101,6 @@ class TestLoadSave:
 
 
 class TestQuery:
-
     def _prepare(self, tmp_path):
         f1 = _make_file(tmp_path / "a.jpg", size=3)
         f2 = _make_file(tmp_path / "b.jpg", size=4)
@@ -190,12 +188,12 @@ class TestFileRemappers:
 
         # A cache recorded under the ccc root
         cache_key = build_key(
-            os.path.join(str(cache_root), os.path.join("aa", "cc")), 9,
-            os.stat(str(f)).st_mtime_ns)
+            os.path.join(str(cache_root), os.path.join("aa", "cc")), 9, os.stat(str(f)).st_mtime_ns
+        )
 
-        store = SignatureStore(None,
-                               file_remappers=[(re.escape(str(live_root)),
-                                                _repl_literal(str(cache_root)))])
+        store = SignatureStore(
+            None, file_remappers=[(re.escape(str(live_root)), _repl_literal(str(cache_root)))]
+        )
         store.data = {cache_key: "payload"}
 
         results, not_found_idx, _ = store.query([str(f)])
@@ -208,14 +206,14 @@ class TestFileRemappers:
         live_root.mkdir(parents=True)
         f = _make_file(live_root / "aa" / "cc", size=9)
 
-        store = SignatureStore(None,
-                               file_remappers=[(re.escape(str(live_root)),
-                                                _repl_literal(str(cache_root)))])
+        store = SignatureStore(
+            None, file_remappers=[(re.escape(str(live_root)), _repl_literal(str(cache_root)))]
+        )
         store.query([str(f)], compute=lambda ps: ["new_payload"], save=False)
 
         expected_key = build_key(
-            os.path.join(str(cache_root), os.path.join("aa", "cc")), 9,
-            os.stat(str(f)).st_mtime_ns)
+            os.path.join(str(cache_root), os.path.join("aa", "cc")), 9, os.stat(str(f)).st_mtime_ns
+        )
         assert store.data == {expected_key: "new_payload"}
 
 
@@ -228,8 +226,8 @@ class TestCacheRemappers:
         live_root.mkdir(parents=True)
         f = _make_file(live_root / "aa" / "cc", size=9)
         stored_key = build_key(
-            os.path.join(str(cache_root), os.path.join("aa", "cc")), 9,
-            os.stat(str(f)).st_mtime_ns)
+            os.path.join(str(cache_root), os.path.join("aa", "cc")), 9, os.stat(str(f)).st_mtime_ns
+        )
         return cache_root, live_root, f, stored_key
 
     def test_load_renames_keys_into_live_space(self, tmp_path):
@@ -237,13 +235,14 @@ class TestCacheRemappers:
         json_path = tmp_path / "signature.json"
         json_path.write_text(json.dumps({stored_key: "payload"}), encoding="utf-8")
 
-        store = SignatureStore(str(json_path),
-                               cache_remappers=[(re.escape(str(cache_root)),
-                                                 _repl_literal(str(live_root)))]).load()
+        store = SignatureStore(
+            str(json_path),
+            cache_remappers=[(re.escape(str(cache_root)), _repl_literal(str(live_root)))],
+        ).load()
 
         expected_key = build_key(
-            os.path.join(str(live_root), os.path.join("aa", "cc")), 9,
-            os.stat(str(f)).st_mtime_ns)
+            os.path.join(str(live_root), os.path.join("aa", "cc")), 9, os.stat(str(f)).st_mtime_ns
+        )
         assert store.data == {expected_key: "payload"}
 
         results, not_found_idx, _ = store.query([str(f)])
@@ -255,9 +254,10 @@ class TestCacheRemappers:
         json_path = tmp_path / "signature.json"
         json_path.write_text(json.dumps({stored_key: "payload"}), encoding="utf-8")
 
-        store = SignatureStore(str(json_path),
-                               cache_remappers=[(re.escape(str(cache_root)),
-                                                 _repl_literal(str(live_root)))]).load()
+        store = SignatureStore(
+            str(json_path),
+            cache_remappers=[(re.escape(str(cache_root)), _repl_literal(str(live_root)))],
+        ).load()
         store.save()
 
         with open(json_path, encoding="utf-8") as f_json:
@@ -280,11 +280,11 @@ class TestCacheRemappers:
         json_path = tmp_path / "signature.json"
         json_path.write_text(json.dumps({stored_key: "payload"}), encoding="utf-8")
 
-        store = SignatureStore(str(json_path),
-                               file_remappers=[(re.escape(str(live_root)),
-                                                _repl_literal(str(cache_root)))],
-                               cache_remappers=[(re.escape(str(cache_root)),
-                                                 _repl_literal(str(live_root)))]).load()
+        store = SignatureStore(
+            str(json_path),
+            file_remappers=[(re.escape(str(live_root)), _repl_literal(str(cache_root)))],
+            cache_remappers=[(re.escape(str(cache_root)), _repl_literal(str(live_root)))],
+        ).load()
         # load() migrated the stored key into the live space; the file rule
         # maps the live path back into the cache space — the two cancel to a miss.
         results, not_found_idx, _ = store.query([str(f)])
@@ -298,14 +298,17 @@ class TestCacheRemappers:
         # JSON entry wins the collision.
         colliding = build_key(os.path.join(str(tmp_path), "other", "aa", "cc"), 9, mtime)
         json_path = tmp_path / "signature.json"
-        json_path.write_text(json.dumps({stored_key: "first", colliding: "second"}),
-                             encoding="utf-8")
+        json_path.write_text(
+            json.dumps({stored_key: "first", colliding: "second"}), encoding="utf-8"
+        )
 
-        store = SignatureStore(str(json_path),
-                               cache_remappers=[(re.escape(str(cache_root)),
-                                                 _repl_literal(str(live_root))),
-                                                (re.escape(str(tmp_path / "other")),
-                                                 _repl_literal(str(live_root)))]).load()
+        store = SignatureStore(
+            str(json_path),
+            cache_remappers=[
+                (re.escape(str(cache_root)), _repl_literal(str(live_root))),
+                (re.escape(str(tmp_path / "other")), _repl_literal(str(live_root))),
+            ],
+        ).load()
         expected_key = build_key(os.path.join(str(live_root), "aa", "cc"), 9, mtime)
         assert store.data == {expected_key: "second"}
 
@@ -362,11 +365,11 @@ class TestCrossPlatformBridging:
         f = _make_file(tmp_path / "pool" / "img.jpg", size=11, mtime_ns=2500)
         real = os.path.realpath(str(f))
         if os.name == "nt":
-            drive = os.path.splitdrive(real)[0]              # e.g. "C:"
+            drive = os.path.splitdrive(real)[0]  # e.g. "C:"
             linux_root = "/mnt/" + drive[0].lower()
             pairs = windows_to_linux_remappers(drive, linux_root)
         else:
-            linux_root = os.path.dirname(real)               # the pool directory
+            linux_root = os.path.dirname(real)  # the pool directory
             pairs = linux_to_windows_remappers(linux_root, "E:")
         foreign_key = build_key(apply_remappers(real, pairs), 11, 2500)
 

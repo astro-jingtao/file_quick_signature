@@ -19,9 +19,9 @@ pip install -e . --no-build-isolation
 ```python
 from file_quick_signature.key import file_quick_signature, parse_key
 
-key = file_quick_signature(r"E:\pool\a.jpg")   # "E:\\pool\\a.jpg_98304_133851860294701234"
-sig = parse_key(key)                            # SignatureKey(path=..., size=98304, mtime_ns=133851860294701234)
-sig.path, sig.size, sig.mtime_ns                # the constituent quantities
+key = file_quick_signature(r"E:\pool\a.jpg")  # "E:\\pool\\a.jpg_98304_133851860294701234"
+sig = parse_key(key)  # SignatureKey(path=..., size=98304, mtime_ns=133851860294701234)
+sig.path, sig.size, sig.mtime_ns  # the constituent quantities
 ```
 
 The key is `"{realpath}_{st_size}_{st_mtime_ns}"` — same bytes the historical implementation produced. `parse_key` reverses it by splitting on the last two separators, so underscores inside paths are safe. Raises `ValueError` on malformed keys.
@@ -35,7 +35,8 @@ from file_quick_signature.store import SignatureStore
 
 store = SignatureStore("E:/pool/signature.json").load()
 results, not_found_idx, not_found_keys = store.query(
-    img_paths, compute=my_batch_hash)   # misses -> my_batch_hash(paths), recorded + saved
+    img_paths, compute=my_batch_hash
+)  # misses -> my_batch_hash(paths), recorded + saved
 ```
 
 - `results` — one entry per input path, aligned 1:1: the stored payload on a hit, the computed payload on a miss (when `compute` is given), None on a miss without `compute`.
@@ -61,27 +62,26 @@ A cache built on Windows (`E:\pool\a.jpg` keys) used from a Linux mount, or vice
 
 ```python
 # On Linux, files at /mnt/e/pool/... hit the Windows-built cache:
-SignatureStore("/mnt/e/pool/signature.json",
-               file_remappers=[(r"^/mnt/e", "E:"), (r"/", r"\\")])
+SignatureStore("/mnt/e/pool/signature.json", file_remappers=[(r"^/mnt/e", "E:"), (r"/", r"\\")])
 
 # Or migrate the cache keys into the live Linux space instead:
-SignatureStore("/mnt/e/pool/signature.json",
-               cache_remappers=[(r"^E:\\", "/mnt/e/"), (r"\\", "/")])
+SignatureStore("/mnt/e/pool/signature.json", cache_remappers=[(r"^E:\\", "/mnt/e/"), (r"\\", "/")])
 ```
 
 …or generate them from the two roots (`key.py`), which also component-bounds the prefix rule so `/mnt/e2` does not catch `/mnt/e` rules:
 
 ```python
-from file_quick_signature.key import (linux_to_windows_remappers,
-                                      windows_to_linux_remappers)
+from file_quick_signature.key import linux_to_windows_remappers, windows_to_linux_remappers
 
 # On Linux, files at /mnt/e/pool/... hit the Windows-built cache:
-SignatureStore("/mnt/e/pool/signature.json",
-               file_remappers=linux_to_windows_remappers("/mnt/e", "E:"))
+SignatureStore(
+    "/mnt/e/pool/signature.json", file_remappers=linux_to_windows_remappers("/mnt/e", "E:")
+)
 
 # Or migrate the cache keys into the live Linux space instead:
-SignatureStore("/mnt/e/pool/signature.json",
-               cache_remappers=windows_to_linux_remappers("E:", "/mnt/e"))
+SignatureStore(
+    "/mnt/e/pool/signature.json", cache_remappers=windows_to_linux_remappers("E:", "/mnt/e")
+)
 ```
 
 `linux_to_windows_remappers(linux_root, windows_root)` yields `[(r"^<linux_root>(?=/|$)", "<windows_root>"), (r"/", r"\\")]`; `windows_to_linux_remappers(windows_root, linux_root)` the inverse. `/` separators in the Windows root are accepted (`E:/pool` behaves as `E:\pool`); roots match exactly as given (drive-letter case included). Paths outside the root keep their prefix — only their separators are normalized. Both functions raise `ValueError` for a filesystem root (`/` or `\`).

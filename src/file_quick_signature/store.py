@@ -46,10 +46,12 @@ class SignatureStore:
     miss (each side translates in the opposite direction).
     """
 
-    def __init__(self,
-                 json_path: str | None = None,
-                 file_remappers: FileRemappers = None,
-                 cache_remappers: FileRemappers = None) -> None:
+    def __init__(
+        self,
+        json_path: str | None = None,
+        file_remappers: FileRemappers = None,
+        cache_remappers: FileRemappers = None,
+    ) -> None:
         """Initialize the store; parameters are documented in the class docstring."""
         self.json_path = json_path
         self.file_remappers: list[tuple[str, str]] = list(file_remappers or [])
@@ -90,10 +92,12 @@ class SignatureStore:
         """Quick-signature key for a live file path, under `file_remappers`."""
         return file_quick_signature(path, self.file_remappers)
 
-    def query(self,
-              paths: Sequence[str],
-              compute: Callable[[Sequence[str]], Sequence[Any]] | None = None,
-              save: bool = True) -> tuple[list[Any], list[int], list[str]]:
+    def query(
+        self,
+        paths: Sequence[str],
+        compute: Callable[[Sequence[str]], Sequence[Any]] | None = None,
+        save: bool = True,
+    ) -> tuple[list[Any], list[int], list[str]]:
         """
         Look up the stored payload of every path, computing and recording misses.
 

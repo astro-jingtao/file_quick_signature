@@ -18,16 +18,19 @@ from file_quick_signature.key import (
 class TestBuildAndParseRoundTrip:
     """parse_key(build_key(...)) must round-trip byte-identically, whatever the path."""
 
-    @pytest.mark.parametrize("path", [
-        r"E:\pool\a.jpg",
-        "/mnt/e/pool/a.jpg",
-        r"C:\under_score_dir\file_name_1.jpg",       # underscores in the path
-        r"C:\dir\trailing_digits_123_456.jpg",       # path ends like the suffix code
-        r"C:\dir\a_1_2_3_4_5.jpg",                   # many digit-ish segments
-        "中文图片/图片_0001.jpg",                      # non-ASCII
-        r"\\server\share\img.jpg",                   # UNC path
-        "a",                                          # no separator at all in the path
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            r"E:\pool\a.jpg",
+            "/mnt/e/pool/a.jpg",
+            r"C:\under_score_dir\file_name_1.jpg",  # underscores in the path
+            r"C:\dir\trailing_digits_123_456.jpg",  # path ends like the suffix code
+            r"C:\dir\a_1_2_3_4_5.jpg",  # many digit-ish segments
+            "中文图片/图片_0001.jpg",  # non-ASCII
+            r"\\server\share\img.jpg",  # UNC path
+            "a",  # no separator at all in the path
+        ],
+    )
     def test_round_trip(self, path):
         key = build_key(path, 123, 456789)
         assert key == f"{path}_123_456789"
@@ -45,20 +48,22 @@ class TestBuildAndParseRoundTrip:
         key = build_key("/x", 0, 0)
         assert parse_key(key) == SignatureKey("/x", 0, 0)
 
-    @pytest.mark.parametrize("bad", [
-        "no-separators-at-all",
-        "only_one_123",
-        "path_size_notanumber",
-        "path_notanumber_123",
-        "",
-    ])
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "no-separators-at-all",
+            "only_one_123",
+            "path_size_notanumber",
+            "path_notanumber_123",
+            "",
+        ],
+    )
     def test_malformed_key_raises(self, bad):
         with pytest.raises(ValueError, match="Malformed"):
             parse_key(bad)
 
 
 class TestFileQuickSignature:
-
     def _write(self, path, size=10):
         path.write_bytes(b"x" * size)
         st = os.stat(str(path))
@@ -76,7 +81,8 @@ class TestFileQuickSignature:
         p = tmp_path / "img.jpg"
         self._write(p)
         assert file_quick_signature(str(p)) == file_quick_signature(
-            os.path.join(str(tmp_path), ".", "img.jpg"))
+            os.path.join(str(tmp_path), ".", "img.jpg")
+        )
 
     def test_missing_file_raises(self):
         with pytest.raises(FileNotFoundError):
@@ -122,7 +128,6 @@ class TestFileQuickSignature:
 
 
 class TestApplyRemappers:
-
     def test_none_and_empty_pass_through(self):
         assert apply_remappers("/a/b", None) == "/a/b"
         assert apply_remappers("/a/b", []) == "/a/b"
@@ -141,7 +146,6 @@ class TestApplyRemappers:
 
 
 class TestRemapKey:
-
     def test_path_component_remapped_only(self):
         key = build_key(r"E:\pool\a.jpg", 5, 6)
         out = remap_key(key, [(re.escape(r"E:\pool"), r"/mnt/e/pool")])
@@ -200,10 +204,12 @@ class TestPlatformBridgeRemappers:
         assert apply_remappers("/mnt/e2/x.jpg", pairs) == r"\mnt\e2\x.jpg"
 
     def test_forward_slash_windows_root_normalized(self):
-        assert (linux_to_windows_remappers("/mnt/e", "E:/pool")
-                == linux_to_windows_remappers("/mnt/e", r"E:\pool"))
-        assert (windows_to_linux_remappers("E:/pool", "/mnt/e")
-                == windows_to_linux_remappers(r"E:\pool", "/mnt/e"))
+        assert linux_to_windows_remappers("/mnt/e", "E:/pool") == linux_to_windows_remappers(
+            "/mnt/e", r"E:\pool"
+        )
+        assert windows_to_linux_remappers("E:/pool", "/mnt/e") == windows_to_linux_remappers(
+            r"E:\pool", "/mnt/e"
+        )
 
     def test_filesystem_root_raises(self):
         with pytest.raises(ValueError, match="named directory"):
@@ -213,7 +219,9 @@ class TestPlatformBridgeRemappers:
 
     def test_trailing_separator_roots(self):
         # A trailing separator on either root is stripped; the rules are identical.
-        assert (linux_to_windows_remappers("/mnt/e/", "E:\\")
-                == linux_to_windows_remappers("/mnt/e", "E:"))
-        assert (windows_to_linux_remappers("E:\\", "/mnt/e/")
-                == windows_to_linux_remappers("E:", "/mnt/e"))
+        assert linux_to_windows_remappers("/mnt/e/", "E:\\") == linux_to_windows_remappers(
+            "/mnt/e", "E:"
+        )
+        assert windows_to_linux_remappers("E:\\", "/mnt/e/") == windows_to_linux_remappers(
+            "E:", "/mnt/e"
+        )
