@@ -2,7 +2,7 @@
 
 A quick-change file signature key cache: keys of the form `{path}_{size}_{mtime_ns}` detect file modifications without reading file contents, and a JSON-backed store maps those keys to arbitrary payloads (content hashes, embeddings, ...) so unchanged files skip re-processing. Keys are byte-identical with the historical ones, so existing `signature.json` caches keep working.
 
-Works on Windows and Linux alike — pure `os`/`json`/`re`, no platform-specific code. Cross-machine caches (different roots or separators) are reconciled with regex path remapping.
+Works on Windows and Linux alike — pure `os`/`json`/`re`, no platform-specific code. Cross-machine caches (different roots or separators) are reconciled with path remapping.
 
 ## Install
 
@@ -46,72 +46,78 @@ results, not_found_idx, not_found_keys = store.query(
 - `save=False` records in memory only (the historical `clean_cache` semantics).
 - Missing JSON file loads as an empty store; `json_path=None` is in-memory only and `save()` raises.
 
-## Path remapping (regex)
+## Path remapping
 
-Both remap sides take an ordered list of `(pattern, replacement)` regex pairs applied with `re.sub` in list order (later rules see earlier output). A Windows path used as a *replacement* must double its backslashes: `path.replace("\\", "\\\\")` — a lone `\U`/`\A` in a replacement template is an escape error.
+A remapper is any class with a `remap(path) -> str` method (`key.Remapper`) — however it works internally. The built-in classes cover the common cases; your own class plugs in the same way. Both remap sides take one remapper, or an ordered sequence of them (later remappers see earlier output).
 
-A pair may carry a third element selecting the behavior when its pattern matches nothing: `"raise"` (raise `ValueError`), `"warn"` (log a warning, leave the path unchanged), or `"ignore"` (leave it unchanged — the default, and always the behavior of bare two-element pairs). `"warn"` reports through the `file_quick_signature.key` logger; with no logging configured, Python's last-resort handler still prints it to stderr. Example: `[(r"^E:\\pool", "E:/data", "raise")]` turns any path outside `E:\pool` into an error instead of a silently mis-keyed lookup. An invalid third element raises `ValueError` — checked even when the pattern matches, so a typo cannot hide behind a hit.
+- `RegexRemapper(*rules)` — ordered `re.sub` rules: `(pattern, replacement)` pairs, e.g. `RegexRemapper((r"^E:", "/mnt/e"), (r"\\", "/"))`. A Windows path used as a *replacement* must double its backslashes: `path.replace("\\", "\\\\")` — a lone `\U`/`\A` in a replacement template is an escape error. Rules are validated once at construction.
+- `LinuxToWindowsRemapper(linux_root, windows_root, on_unmatched=...)` / `WindowsToLinuxRemapper(...)` — the cross-OS bridge (regex internally).
+- `AbsoluteToRelativeRemapper(base, on_unmatched=...)` / `RelativeToAbsoluteRemapper(...)` — portable relative-path keys (`os.path.relpath` / `join` semantics internally).
 
-**File-side** (`file_remappers`) rewrites a live file's path before its key is built — new lookups and new records stay in the cache's path space. Rule `("xxx/yyy", "ccc")`: the file `xxx/yyy/aa/cc` is looked up (and recorded) as `ccc/aa/cc`.
+A rule or remapper's `on_unmatched` selects the behavior for a path it cannot remap: `"raise"` (raise `ValueError`), `"warn"` (log a warning, leave the path unchanged), or `"ignore"` (leave it unchanged — the default, and always the behavior of bare two-element regex pairs). `"warn"` reports through the `file_quick_signature.key` logger; with no logging configured, Python's last-resort handler still prints it to stderr. Example: `RegexRemapper((r"^E:\\pool", "E:/data", "raise"))` turns any path outside `E:\pool` into an error instead of a silently mis-keyed lookup. An invalid value raises `ValueError` at construction, so a typo cannot hide behind a hit.
 
-**Cache-side** (`cache_remappers`) rewrites the path component of *stored keys* at `load()` — old keys migrate into the live path space (persists on next `save`; on collision the later entry wins). Rule `("ccc", "xxx/yyy")`: the stored key `ccc/aa/cc` becomes `xxx/yyy/aa/cc`.
+**File-side** (`file_remappers`) rewrites a live file's path before its key is built — new lookups and new records stay in the cache's path space. `RegexRemapper((r"xxx/yyy", "ccc"))`: the file `xxx/yyy/aa/cc` is looked up (and recorded) as `ccc/aa/cc`.
+
+**Cache-side** (`cache_remappers`) rewrites the path component of *stored keys* at `load()` — old keys migrate into the live path space (persists on next `save`; on collision the later entry wins). `RegexRemapper((r"ccc", r"xxx/yyy"))`: the stored key `ccc/aa/cc` becomes `xxx/yyy/aa/cc`.
 
 For one relocated root configure either side, not both — the two sides translate in opposite directions, and both active for the same prefix make lookups miss.
 
 ### Windows ↔ Linux example
 
-A cache built on Windows (`E:\pool\a.jpg` keys) used from a Linux mount, or vice versa, needs a prefix rewrite plus separator normalization. Write the pairs by hand:
+A cache built on Windows (`E:\pool\a.jpg` keys) used from a Linux mount, or vice versa, needs a prefix rewrite plus separator normalization. Write the rules by hand:
 
 ```python
-# On Linux, files at /mnt/e/pool/... hit the Windows-built cache:
-SignatureStore("/mnt/e/pool/signature.json", file_remappers=[(r"^/mnt/e", "E:"), (r"/", r"\\")])
-
-# Or migrate the cache keys into the live Linux space instead:
-SignatureStore("/mnt/e/pool/signature.json", cache_remappers=[(r"^E:\\", "/mnt/e/"), (r"\\", "/")])
-```
-
-…or generate them from the two roots (`key.py`), which also component-bounds the prefix rule so `/mnt/e2` does not catch `/mnt/e` rules:
-
-```python
-from file_quick_signature.key import linux_to_windows_remappers, windows_to_linux_remappers
-
 # On Linux, files at /mnt/e/pool/... hit the Windows-built cache:
 SignatureStore(
-    "/mnt/e/pool/signature.json", file_remappers=linux_to_windows_remappers("/mnt/e", "E:")
+    "/mnt/e/pool/signature.json",
+    file_remappers=RegexRemapper((r"^/mnt/e", "E:"), (r"/", r"\\")),
 )
 
 # Or migrate the cache keys into the live Linux space instead:
 SignatureStore(
-    "/mnt/e/pool/signature.json", cache_remappers=windows_to_linux_remappers("E:", "/mnt/e")
+    "/mnt/e/pool/signature.json",
+    cache_remappers=RegexRemapper((r"^E:\\", "/mnt/e/"), (r"\\", "/")),
 )
 ```
 
-`linux_to_windows_remappers(linux_root, windows_root)` yields `[(r"^<linux_root>(?=/|$)", "<windows_root>"), (r"/", r"\\")]`; `windows_to_linux_remappers(windows_root, linux_root)` the inverse. `/` separators in the Windows root are accepted (`E:/pool` behaves as `E:\pool`); roots match exactly as given (drive-letter case included). Paths outside the root keep their prefix — only their separators are normalized. Both functions raise `ValueError` for a filesystem root (`/` or `\`).
+…or use the bridge classes (`key.py`), which component-bound the prefix rule so `/mnt/e2` does not catch `/mnt/e` rules:
+
+```python
+from file_quick_signature.key import LinuxToWindowsRemapper, WindowsToLinuxRemapper
+
+# On Linux, files at /mnt/e/pool/... hit the Windows-built cache:
+SignatureStore("/mnt/e/pool/signature.json", file_remappers=LinuxToWindowsRemapper("/mnt/e", "E:"))
+
+# Or migrate the cache keys into the live Linux space instead:
+SignatureStore("/mnt/e/pool/signature.json", cache_remappers=WindowsToLinuxRemapper("E:", "/mnt/e"))
+```
+
+`LinuxToWindowsRemapper("/mnt/e", "E:")` maps `/mnt/e/pool/a.jpg` to `E:\pool\a.jpg`; `WindowsToLinuxRemapper("E:", "/mnt/e")` is the inverse — the two round-trip back to the original path. `/` separators in the Windows root are accepted (`E:/pool` behaves as `E:\pool`); roots match exactly as given (drive-letter case included). Paths outside the root are governed by `on_unmatched` (default: they keep their prefix — only their separators are normalized). Both classes raise `ValueError` for a filesystem root (`/` or `\`).
 
 ### Relative-path keys
 
-`key.py` also generates base-relative pairs — a portable cache whose keys no longer depend on where the tree lives:
+`key.py` also provides base-relative remappers — a portable cache whose keys no longer depend on where the tree lives:
 
 ```python
-from file_quick_signature.key import absolute_to_relative_remappers, relative_to_absolute_remappers
+from file_quick_signature.key import AbsoluteToRelativeRemapper, RelativeToAbsoluteRemapper
 
 # Key live files relative to the pool root: E:\pool\sub\a.jpg -> "sub\a.jpg"
-SignatureStore("signature.json", file_remappers=absolute_to_relative_remappers(r"E:\pool"))
+SignatureStore("signature.json", file_remappers=AbsoluteToRelativeRemapper(r"E:\pool"))
 
 # Strict: any path outside the base is an error, not a silently mis-keyed lookup
-absolute_to_relative_remappers("/mnt/e/pool", on_unmatched="raise")
+AbsoluteToRelativeRemapper("/mnt/e/pool", on_unmatched="raise")
 
 # Reverse: stored relative keys are read as absolute live paths at load
-SignatureStore("signature.json", cache_remappers=relative_to_absolute_remappers("/mnt/e/pool"))
+SignatureStore("signature.json", cache_remappers=RelativeToAbsoluteRemapper("/mnt/e/pool"))
 ```
 
-`absolute_to_relative_remappers(base, on_unmatched="ignore")` yields a prefix rule stripping `base` and its separator, plus a separator-normalization rule to the base's flavor — `E:/pool/sub/a.jpg` and `E:\pool\sub\a.jpg` land on the same key. A path not carrying the `base` prefix (outside the tree, or already relative) is governed by `on_unmatched`; under the default it keeps its form apart from separator normalization, so already-relative paths stay in the relative key space.
+`AbsoluteToRelativeRemapper(base, on_unmatched="ignore")` applies `os.path.relpath(path, base)` semantics: redundant components normalize away (`./x/../sub/a.jpg` keys the same as `sub/a.jpg`), the Windows flavor reads both separators and matches case-insensitively, and the base itself maps to `"."`. A path the base cannot relativize is governed by `on_unmatched`: one not absolute in the base's flavor (already-relative inputs, other-OS roots), one on a different drive (Windows flavor), or one outside the base — under the default each is left unchanged, so already-relative paths stay in the relative key space and outside trees never produce `..`-escape keys.
 
-`relative_to_absolute_remappers(base, on_unmatched="ignore")` is the inverse: it prepends `base` + separator to paths that do not look absolute in either OS's syntax (`C:`, `\\unc`, `/rooted`, `\rooted`); already-absolute paths match nothing and pass through (per `on_unmatched`), so re-applying is a no-op.
+`RelativeToAbsoluteRemapper(base, on_unmatched="ignore")` is the inverse (`os.path.join` + normalize semantics): it anchors a relative path under `base`, resolving `..` components (`../other/a.jpg` under `/mnt/e/pool` maps to `/mnt/e/other/a.jpg`); paths already absolute-looking in either OS's syntax (`C:`, `\\unc`, `/rooted`, `\rooted`) are governed by `on_unmatched` — under the default they pass through unchanged, so re-applying is a no-op. The two classes round-trip: rel then abs restores the original absolute path, abs then rel the original relative path.
 
-Bases of any flavor work — Windows `E:\pool` / `E:/pool` / `C:\`, POSIX `/mnt/e` / `/`, or relative (`pool` strips that prefix from relative paths; `relative_to_absolute_remappers(os.path.relpath(A, B))` re-anchors paths relative to `A` into paths relative to `B`). Bases match textually, exactly as written (drive-letter case included).
+Bases of any absolute flavor work — Windows `E:\pool` / `E:/pool` / `C:\` / UNC, POSIX `/mnt/e` / `/` — and the flavor is detected textually from the base, so a foreign-flavor base works on any host OS (the POSIX flavor treats `\` as a regular filename character). `RelativeToAbsoluteRemapper` also accepts a relative base: `RelativeToAbsoluteRemapper(os.path.relpath(A, B))` re-anchors paths relative to `A` into paths relative to `B`. `AbsoluteToRelativeRemapper` rejects relative bases — relativizing against them is not well defined (strip relative prefixes with `RegexRemapper` instead).
 
-Cross-OS sharing: relative keys carry the base flavor's separators, so to share one relative cache between Windows and POSIX, append a separator rule on the Windows side so both key with `/` — `file_remappers=absolute_to_relative_remappers(r"E:\pool") + [(r"\\", "/")]`.
+Cross-OS sharing: relative keys carry the base flavor's separators, so to share one relative cache between Windows and POSIX, append a separator rule on the Windows side so both key with `/` — `file_remappers=[AbsoluteToRelativeRemapper(r"E:\pool"), RegexRemapper((r"\\", "/"))]`.
 
 ## Development
 

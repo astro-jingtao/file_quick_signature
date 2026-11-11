@@ -5,14 +5,14 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import json
 import os
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from file_quick_signature.key import Remapper, file_quick_signature, remap_key
 
-# A remapper is a (pattern, replacement) regex pair, optionally extended with
-# a third element naming the behavior on a non-match (see `key.Remapper`);
-# lists are applied in order.
-FileRemappers = Optional[Sequence[Remapper]]
+# A remapper is any class with a remap(path) -> str method (see
+# `key.Remapper`); one or an ordered sequence may be given, later remappers
+# seeing earlier output.
+FileRemappers = Optional[Union[Remapper, Sequence[Remapper]]]
 
 
 class SignatureStore:
@@ -29,20 +29,21 @@ class SignatureStore:
     json_path : str, optional
         Path of the JSON cache file. ``None`` gives an in-memory-only store
         (`save` then refuses rather than silently dropping data).
-    file_remappers : sequence of (pattern, replacement[, on_unmatched]), optional
-        File-side remap: regex pairs applied to a file's canonical path before
-        its lookup key is built. Rule ``("xxx/yyy", "ccc")`` makes the file
-        ``xxx/yyy/aa/cc`` be looked up (and recorded) as ``ccc/aa/cc``, so new
-        keys stay in the cache's path space. Pairs may carry a third element
-        selecting the behavior when the pattern matches nothing (see
-        `key.apply_remappers`).
-    cache_remappers : sequence of (pattern, replacement[, on_unmatched]), optional
-        Cache-side remap: regex pairs applied to the path component of stored
-        keys at `load` time. Rule ``("ccc", "xxx/yyy")`` rewrites the stored
-        key ``ccc/aa/cc`` into ``xxx/yyy/aa/cc``, so lookups from the live
-        file tree hit entries recorded under a different root. The rename is
-        in-memory; it persists only when the store is later saved (on
-        collision the later entry wins).
+    file_remappers : Remapper or sequence of Remapper, optional
+        File-side remap: remappers rewriting a file's canonical path before
+        its lookup key is built. `RegexRemapper((r"xxx/yyy", "ccc"))` makes
+        the file ``xxx/yyy/aa/cc`` be looked up (and recorded) as
+        ``ccc/aa/cc``, so new keys stay in the cache's path space;
+        `LinuxToWindowsRemapper` / `WindowsToLinuxRemapper` and
+        `AbsoluteToRelativeRemapper` / `RelativeToAbsoluteRemapper` cover the
+        common cross-OS and relative-key cases.
+    cache_remappers : Remapper or sequence of Remapper, optional
+        Cache-side remap: remappers rewriting the path component of stored
+        keys at `load` time. `RegexRemapper((r"ccc", "xxx/yyy"))` rewrites the
+        stored key ``ccc/aa/cc`` into ``xxx/yyy/aa/cc``, so lookups from the
+        live file tree hit entries recorded under a different root. The
+        rename is in-memory; it persists only when the store is later saved
+        (on collision the later entry wins).
 
     For one relocated root configure EITHER side, not both — a file rule
     writes new keys into the cache's space, a cache rule migrates old keys
@@ -58,8 +59,8 @@ class SignatureStore:
     ) -> None:
         """Initialize the store; parameters are documented in the class docstring."""
         self.json_path = json_path
-        self.file_remappers: list[tuple[str, str]] = list(file_remappers or [])
-        self.cache_remappers: list[tuple[str, str]] = list(cache_remappers or [])
+        self.file_remappers: FileRemappers = file_remappers
+        self.cache_remappers: FileRemappers = cache_remappers
         self.data: dict = {}
 
     def load(self) -> SignatureStore:

@@ -6,13 +6,14 @@ import re
 import pytest
 
 from file_quick_signature.key import (
-    absolute_to_relative_remappers,
+    AbsoluteToRelativeRemapper,
+    LinuxToWindowsRemapper,
+    RegexRemapper,
+    RelativeToAbsoluteRemapper,
+    WindowsToLinuxRemapper,
     apply_remappers,
     build_key,
-    linux_to_windows_remappers,
     parse_key,
-    relative_to_absolute_remappers,
-    windows_to_linux_remappers,
 )
 from file_quick_signature.store import SignatureStore
 
@@ -195,7 +196,10 @@ class TestFileRemappers:
         )
 
         store = SignatureStore(
-            None, file_remappers=[(re.escape(str(live_root)), _repl_literal(str(cache_root)))]
+            None,
+            file_remappers=RegexRemapper(
+                (re.escape(str(live_root)), _repl_literal(str(cache_root)))
+            ),
         )
         store.data = {cache_key: "payload"}
 
@@ -210,7 +214,10 @@ class TestFileRemappers:
         f = _make_file(live_root / "aa" / "cc", size=9)
 
         store = SignatureStore(
-            None, file_remappers=[(re.escape(str(live_root)), _repl_literal(str(cache_root)))]
+            None,
+            file_remappers=RegexRemapper(
+                (re.escape(str(live_root)), _repl_literal(str(cache_root)))
+            ),
         )
         store.query([str(f)], compute=lambda ps: ["new_payload"], save=False)
 
@@ -240,7 +247,9 @@ class TestCacheRemappers:
 
         store = SignatureStore(
             str(json_path),
-            cache_remappers=[(re.escape(str(cache_root)), _repl_literal(str(live_root)))],
+            cache_remappers=RegexRemapper(
+                (re.escape(str(cache_root)), _repl_literal(str(live_root)))
+            ),
         ).load()
 
         expected_key = build_key(
@@ -259,7 +268,9 @@ class TestCacheRemappers:
 
         store = SignatureStore(
             str(json_path),
-            cache_remappers=[(re.escape(str(cache_root)), _repl_literal(str(live_root)))],
+            cache_remappers=RegexRemapper(
+                (re.escape(str(cache_root)), _repl_literal(str(live_root)))
+            ),
         ).load()
         store.save()
 
@@ -285,8 +296,12 @@ class TestCacheRemappers:
 
         store = SignatureStore(
             str(json_path),
-            file_remappers=[(re.escape(str(live_root)), _repl_literal(str(cache_root)))],
-            cache_remappers=[(re.escape(str(cache_root)), _repl_literal(str(live_root)))],
+            file_remappers=RegexRemapper(
+                (re.escape(str(live_root)), _repl_literal(str(cache_root)))
+            ),
+            cache_remappers=RegexRemapper(
+                (re.escape(str(cache_root)), _repl_literal(str(live_root)))
+            ),
         ).load()
         # load() migrated the stored key into the live space; the file rule
         # maps the live path back into the cache space — the two cancel to a miss.
@@ -307,10 +322,10 @@ class TestCacheRemappers:
 
         store = SignatureStore(
             str(json_path),
-            cache_remappers=[
+            cache_remappers=RegexRemapper(
                 (re.escape(str(cache_root)), _repl_literal(str(live_root))),
                 (re.escape(str(tmp_path / "other")), _repl_literal(str(live_root))),
-            ],
+            ),
         ).load()
         expected_key = build_key(os.path.join(str(live_root), "aa", "cc"), 9, mtime)
         assert store.data == {expected_key: "second"}
@@ -326,9 +341,7 @@ class TestCrossPlatformBridging:
 
         # On Windows (or any OS) the file lives under tmp_path; map it onto the
         # Linux root, normalizing separators at the same time.
-        rules = [
-            (re.escape(str(tmp_path)) + r"(\\|/)", "/mnt/e/pool/"),
-        ]
+        rules = RegexRemapper((re.escape(str(tmp_path)) + r"(\\|/)", "/mnt/e/pool/"))
         store = SignatureStore(None, file_remappers=rules)
         store.data = {linux_key: "payload"}
 
@@ -349,10 +362,10 @@ class TestCrossPlatformBridging:
         # separator rule is needed only where the host's native separator is
         # not "/"; on a POSIX host the cache's separators are already native
         # and rewriting them would corrupt the substituted live path.
-        rules = [(r"^/mnt/e/pool", _repl_literal(live_root))]
+        rule_list = [(r"^/mnt/e/pool", _repl_literal(live_root))]
         if os.name == "nt":
-            rules.append((r"/", "\\\\"))
-        store = SignatureStore(str(json_path), cache_remappers=rules).load()
+            rule_list.append((r"/", "\\\\"))
+        store = SignatureStore(str(json_path), cache_remappers=RegexRemapper(*rule_list)).load()
 
         expected_key = build_key(os.path.join(live_root, "img.jpg"), 11, 2500)
         assert store.data == {expected_key: "payload"}
@@ -362,7 +375,7 @@ class TestCrossPlatformBridging:
         assert not_found_idx == []
 
     def test_generated_remappers_bridge_foreign_cache(self, tmp_path):
-        """The generator functions bridge a cache keyed in the other OS's path
+        """The bridge classes remap a cache keyed in the other OS's path
         space: on Windows the live path is mapped into a Linux-built key space,
         on Linux into a Windows-built one."""
         f = _make_file(tmp_path / "pool" / "img.jpg", size=11, mtime_ns=2500)
@@ -370,13 +383,13 @@ class TestCrossPlatformBridging:
         if os.name == "nt":
             drive = os.path.splitdrive(real)[0]  # e.g. "C:"
             linux_root = "/mnt/" + drive[0].lower()
-            pairs = windows_to_linux_remappers(drive, linux_root)
+            remapper = WindowsToLinuxRemapper(drive, linux_root)
         else:
             linux_root = os.path.dirname(real)  # the pool directory
-            pairs = linux_to_windows_remappers(linux_root, "E:")
-        foreign_key = build_key(apply_remappers(real, pairs), 11, 2500)
+            remapper = LinuxToWindowsRemapper(linux_root, "E:")
+        foreign_key = build_key(apply_remappers(real, remapper), 11, 2500)
 
-        store = SignatureStore(None, file_remappers=pairs)
+        store = SignatureStore(None, file_remappers=remapper)
         store.data = {foreign_key: "payload"}
 
         results, not_found_idx, _ = store.query([str(f)])
@@ -390,7 +403,7 @@ class TestRelativeRemappedStore:
     def test_relative_file_remappers_key_and_hit(self, tmp_path):
         base = os.path.realpath(str(tmp_path))
         f = _make_file(tmp_path / "aa" / "cc", size=9)
-        store = SignatureStore(None, file_remappers=absolute_to_relative_remappers(base))
+        store = SignatureStore(None, file_remappers=AbsoluteToRelativeRemapper(base))
 
         results, not_found_idx, _ = store.query(
             [str(f)], compute=lambda ps: ["payload"], save=False
@@ -412,7 +425,7 @@ class TestRelativeRemappedStore:
         json_path.write_text(json.dumps({rel_key: "payload"}), encoding="utf-8")
 
         store = SignatureStore(
-            str(json_path), cache_remappers=relative_to_absolute_remappers(base)
+            str(json_path), cache_remappers=RelativeToAbsoluteRemapper(base)
         ).load()
 
         assert store.data == {store.signature(str(f)): "payload"}
@@ -427,10 +440,10 @@ class TestRelativeRemappedStore:
         outside = _make_file(tmp_path / "drop" / "b.jpg", size=3)
         store = SignatureStore(
             None,
-            file_remappers=absolute_to_relative_remappers(base, on_unmatched="raise"),
+            file_remappers=AbsoluteToRelativeRemapper(base, on_unmatched="raise"),
         )
 
         _results, not_found_idx, _ = store.query([str(inside)])
         assert not_found_idx == [0]  # a plain miss, no raise
-        with pytest.raises(ValueError, match="did not match"):
+        with pytest.raises(ValueError, match="is not under base"):
             store.query([str(outside)])
