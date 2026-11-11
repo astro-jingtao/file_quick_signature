@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 
@@ -143,6 +144,48 @@ class TestApplyRemappers:
 
     def test_no_match_unchanged(self):
         assert apply_remappers("/a/b", [(r"^Z:", "/mnt/z")]) == "/a/b"
+
+
+class TestOnUnmatched:
+    """A remapper's optional third element selects the non-match behavior."""
+
+    def test_bare_pair_stays_ignore(self):
+        # Historical semantics: a bare pair passes unmatched paths through.
+        assert apply_remappers("/a/b", [(r"^Z:", "/mnt/z", "ignore")]) == "/a/b"
+
+    def test_raise_raises(self):
+        with pytest.raises(ValueError, match="did not match"):
+            apply_remappers("/a/b", [(r"^Z:", "/mnt/z", "raise")])
+
+    def test_raise_reports_pattern_and_path(self):
+        with pytest.raises(ValueError, match=r"'\^Z:' did not match path '/a/b'"):
+            apply_remappers("/a/b", [(r"^Z:", "/mnt/z", "raise")])
+
+    def test_warn_logs_and_leaves_path(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            out = apply_remappers("/a/b", [(r"^Z:", "/mnt/z", "warn")])
+        assert out == "/a/b"
+        assert any("did not match" in m and "/a/b" in m for m in caplog.messages)
+
+    def test_matching_rule_unaffected_by_mode(self):
+        for mode in ("raise", "warn", "ignore"):
+            assert apply_remappers("/a/b", [(r"^/a", "/x", mode)]) == "/x/b"
+
+    def test_invalid_mode_raises_even_when_matching(self):
+        # A matching pattern must not mask a bogus on_unmatched value.
+        with pytest.raises(ValueError, match="Invalid on_unmatched"):
+            apply_remappers("/a/b", [(r"^/a", "/x", "explode")])
+
+    def test_malformed_arity_raises(self):
+        with pytest.raises(ValueError, match="Malformed remapper"):
+            apply_remappers("/a/b", [(r"^Z:",)])
+        with pytest.raises(ValueError, match="Malformed remapper"):
+            apply_remappers("/a/b", [("/a", "/z", "raise", "extra")])
+
+    def test_mode_flows_through_remap_key(self):
+        key = build_key(r"E:\pool\a.jpg", 5, 6)
+        with pytest.raises(ValueError, match="did not match"):
+            remap_key(key, [(r"^/mnt", "/media", "raise")])
 
 
 class TestRemapKey:

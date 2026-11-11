@@ -50,6 +50,8 @@ results, not_found_idx, not_found_keys = store.query(
 
 Both remap sides take an ordered list of `(pattern, replacement)` regex pairs applied with `re.sub` in list order (later rules see earlier output). A Windows path used as a *replacement* must double its backslashes: `path.replace("\\", "\\\\")` — a lone `\U`/`\A` in a replacement template is an escape error.
 
+A pair may carry a third element selecting the behavior when its pattern matches nothing: `"raise"` (raise `ValueError`), `"warn"` (log a warning, leave the path unchanged), or `"ignore"` (leave it unchanged — the default, and always the behavior of bare two-element pairs). `"warn"` reports through the `file_quick_signature.key` logger; with no logging configured, Python's last-resort handler still prints it to stderr. Example: `[(r"^E:\\pool", "E:/data", "raise")]` turns any path outside `E:\pool` into an error instead of a silently mis-keyed lookup. An invalid third element raises `ValueError` — checked even when the pattern matches, so a typo cannot hide behind a hit.
+
 **File-side** (`file_remappers`) rewrites a live file's path before its key is built — new lookups and new records stay in the cache's path space. Rule `("xxx/yyy", "ccc")`: the file `xxx/yyy/aa/cc` is looked up (and recorded) as `ccc/aa/cc`.
 
 **Cache-side** (`cache_remappers`) rewrites the path component of *stored keys* at `load()` — old keys migrate into the live path space (persists on next `save`; on collision the later entry wins). Rule `("ccc", "xxx/yyy")`: the stored key `ccc/aa/cc` becomes `xxx/yyy/aa/cc`.

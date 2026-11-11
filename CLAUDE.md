@@ -22,5 +22,5 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `__init__.py` is documentation only; consumers import from the concrete modules (`from file_quick_signature.store import SignatureStore`).
 - Absolute imports only, never relative.
 - Key-format compatibility is a hard constraint: keys produced for un-remapped paths must stay byte-identical to `f"{os.path.realpath(path)}_{st.st_size}_{st.st_mtime_ns}"` — existing historical caches (~160k entries) depend on it. `tests/test_key.py::test_parity_with_reference_formula` guards this; never change the format without a migration story.
-- Remap rules are `(pattern, replacement)` regex pairs; replacements containing Windows paths must double backslashes (re.sub template semantics — `\U` etc. are escape errors).
+- Remap rules are `(pattern, replacement)` regex pairs, optionally with a third element `on_unmatched` (`"raise"`/`"warn"`/`"ignore"`, default ignore — behavior when the pattern matches nothing); replacements containing Windows paths must double backslashes (re.sub template semantics — `\U` etc. are escape errors).
 - Tests are pytest class-based, mirror modules, always use `tmp_path`.

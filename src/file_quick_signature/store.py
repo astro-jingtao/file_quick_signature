@@ -7,10 +7,12 @@ import json
 import os
 from typing import Any, Optional
 
-from file_quick_signature.key import file_quick_signature, remap_key
+from file_quick_signature.key import Remapper, file_quick_signature, remap_key
 
-# A remapper is a (pattern, replacement) regex pair; lists are applied in order.
-FileRemappers = Optional[Sequence[tuple[str, str]]]
+# A remapper is a (pattern, replacement) regex pair, optionally extended with
+# a third element naming the behavior on a non-match (see `key.Remapper`);
+# lists are applied in order.
+FileRemappers = Optional[Sequence[Remapper]]
 
 
 class SignatureStore:
@@ -27,12 +29,14 @@ class SignatureStore:
     json_path : str, optional
         Path of the JSON cache file. ``None`` gives an in-memory-only store
         (`save` then refuses rather than silently dropping data).
-    file_remappers : sequence of (pattern, replacement), optional
+    file_remappers : sequence of (pattern, replacement[, on_unmatched]), optional
         File-side remap: regex pairs applied to a file's canonical path before
         its lookup key is built. Rule ``("xxx/yyy", "ccc")`` makes the file
         ``xxx/yyy/aa/cc`` be looked up (and recorded) as ``ccc/aa/cc``, so new
-        keys stay in the cache's path space.
-    cache_remappers : sequence of (pattern, replacement), optional
+        keys stay in the cache's path space. Pairs may carry a third element
+        selecting the behavior when the pattern matches nothing (see
+        `key.apply_remappers`).
+    cache_remappers : sequence of (pattern, replacement[, on_unmatched]), optional
         Cache-side remap: regex pairs applied to the path component of stored
         keys at `load` time. Rule ``("ccc", "xxx/yyy")`` rewrites the stored
         key ``ccc/aa/cc`` into ``xxx/yyy/aa/cc``, so lookups from the live

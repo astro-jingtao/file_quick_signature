@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import logging
 import os
 import re
-from typing import NamedTuple
+from typing import Literal, NamedTuple, Union
 
 # Key format: "{path}_{size}_{mtime_ns}", byte-identical to the historical
 # reference implementation (`f"{os.path.realpath(path)}_{st.st_size}_{st.st_mtime_ns}"`).
@@ -13,6 +14,21 @@ from typing import NamedTuple
 # right on the last two separators always recovers the three components —
 # underscores inside the path are harmless.
 KEY_SEPARATOR = "_"
+
+# Library logger. No NullHandler on purpose: with no logging configuration
+# Python's last-resort handler still emits warnings to stderr, so "warn"
+# unmatched-remapper reports are visible without any setup.
+_logger = logging.getLogger(__name__)
+
+# Accepted values for a remapper's optional on_unmatched element.
+_VALID_ON_UNMATCHED = ("raise", "warn", "ignore")
+
+# A remapper is a (pattern, replacement) regex pair, optionally extended with
+# a third element naming the behavior when the pattern matches nothing:
+# "raise" (ValueError), "warn" (log a warning and skip), or "ignore"
+# (skip silently — the default and the historical behavior of bare pairs).
+OnUnmatched = Literal["raise", "warn", "ignore"]
+Remapper = Union[tuple[str, str], tuple[str, str, OnUnmatched]]
 
 
 class SignatureKey(NamedTuple):
@@ -70,22 +86,57 @@ def parse_key(key: str) -> SignatureKey:
     return SignatureKey(path, size, mtime_ns)
 
 
-def apply_remappers(path: str, remappers: Sequence[tuple[str, str]] | None) -> str:
+def apply_remappers(path: str, remappers: Sequence[Remapper] | None) -> str:
     """
     Apply an ordered list of ``(pattern, replacement)`` regex pairs to a path.
 
     Each pair is applied via ``re.sub(pattern, replacement, path)`` in list
     order, so later rules see the output of earlier ones. ``None`` or an empty
     list returns the path unchanged.
+
+    A pair may carry a third element ``on_unmatched`` selecting the behavior
+    when its pattern matches nothing: ``"raise"`` raises `ValueError`,
+    ``"warn"`` logs a warning and leaves the path unchanged, and ``"ignore"``
+    (the default, and always the behavior of bare two-element pairs) silently
+    leaves it unchanged.
     """
     if not remappers:
         return path
-    for pattern, replacement in remappers:
-        path = re.sub(pattern, replacement, path)
+    for rule in remappers:
+        if len(rule) == 3:
+            pattern, replacement, on_unmatched = rule
+        elif len(rule) == 2:
+            pattern, replacement = rule
+            on_unmatched = "ignore"
+        else:
+            raise ValueError(
+                f"Malformed remapper {rule!r}: expected '(pattern, replacement)' "
+                "or '(pattern, replacement, on_unmatched)'"
+            )
+        # Validate before substituting so a bogus value cannot hide behind a
+        # pattern that happens to match.
+        if on_unmatched not in _VALID_ON_UNMATCHED:
+            raise ValueError(
+                f"Invalid on_unmatched {on_unmatched!r} in remapper {rule!r}: "
+                f"expected one of {_VALID_ON_UNMATCHED}"
+            )
+        new_path, n_subs = re.subn(pattern, replacement, path)
+        if n_subs == 0 and on_unmatched != "ignore":
+            if on_unmatched == "raise":
+                raise ValueError(
+                    f"Remapper pattern {pattern!r} did not match path {path!r} "
+                    "(on_unmatched='raise')"
+                )
+            _logger.warning(
+                "Remapper pattern %r did not match path %r; leaving it unchanged",
+                pattern,
+                path,
+            )
+        path = new_path
     return path
 
 
-def remap_key(key: str, remappers: Sequence[tuple[str, str]] | None) -> str:
+def remap_key(key: str, remappers: Sequence[Remapper] | None) -> str:
     """Remap the path component of a key, keeping size and mtime_ns intact."""
     sig = parse_key(key)
     return build_key(apply_remappers(sig.path, remappers), sig.size, sig.mtime_ns)
@@ -164,7 +215,7 @@ def windows_to_linux_remappers(windows_root: str, linux_root: str) -> list[tuple
     return _bridge_remappers(windows_root.replace("/", "\\"), linux_root, "\\", "/")
 
 
-def file_quick_signature(path: str, remappers: Sequence[tuple[str, str]] | None = None) -> str:
+def file_quick_signature(path: str, remappers: Sequence[Remapper] | None = None) -> str:
     """
     Return a quick-change fingerprint for the given file.
     The key "{canonical_path}_{size}_{mtime_ns}" can be stored and later
@@ -174,10 +225,11 @@ def file_quick_signature(path: str, remappers: Sequence[tuple[str, str]] | None 
     ----------
     path : str
         Absolute or relative path to the file.
-    remappers : sequence of (pattern, replacement), optional
+    remappers : sequence of (pattern, replacement[, on_unmatched]), optional
         Regex pairs applied to the canonical path before the key is built
         (file-side remap: the file at ``xxx/yyy/aa/cc`` is keyed as
-        ``ccc/aa/cc`` given the rule ``("xxx/yyy", "ccc")``). The file itself
+        ``ccc/aa/cc`` given the rule ``("xxx/yyy", "ccc")``); see
+        `apply_remappers` for the optional third element. The file itself
         is always stated at its real location; only the key's path component
         is rewritten.
 
