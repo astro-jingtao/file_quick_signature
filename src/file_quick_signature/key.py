@@ -30,6 +30,11 @@ _VALID_ON_UNMATCHED = ("raise", "warn", "ignore")
 OnUnmatched = Literal["raise", "warn", "ignore"]
 Remapper = Union[tuple[str, str], tuple[str, str, OnUnmatched]]
 
+# Zero-width pattern matching only at the start of a path that does not look
+# absolute in either OS's syntax: no drive letter, no UNC lead, no leading
+# separator of either flavor.
+_NOT_ABSOLUTE = r"^(?![A-Za-z]:|\\\\|[/\\])"
+
 
 class SignatureKey(NamedTuple):
     """The constituent quantities of a quick-signature key (see `parse_key`)."""
@@ -213,6 +218,116 @@ def windows_to_linux_remappers(windows_root: str, linux_root: str) -> list[tuple
         ``\``) — bridge between named roots instead.
     """
     return _bridge_remappers(windows_root.replace("/", "\\"), linux_root, "\\", "/")
+
+
+def _check_on_unmatched(on_unmatched: str) -> None:
+    # Shared upfront validation for the generator functions' parameter.
+    if on_unmatched not in _VALID_ON_UNMATCHED:
+        raise ValueError(
+            f"Invalid on_unmatched {on_unmatched!r}: expected one of {_VALID_ON_UNMATCHED}"
+        )
+
+
+def _relative_base_rules(base: str) -> tuple[str, str, str]:
+    # Shared base normalization for the relative-path generators: detect the
+    # base's textual flavor (host-OS independent), normalize separators to
+    # that flavor, strip trailing separators (a pure-separator base stays one
+    # separator), and reject an empty base. Returns (base, native_sep,
+    # other_sep); a relative base canonicalizes to "/" separators.
+    if base.startswith("/"):
+        return base.rstrip("/") or "/", "/", "\\"
+    if base.startswith("\\") or re.match(r"[A-Za-z]:", base):
+        return base.replace("/", "\\").rstrip("\\") or "\\", "\\", "/"
+    if not base.replace("\\", "/").rstrip("/"):
+        raise ValueError("Cannot build relative-path remappers from an empty base")
+    return base.replace("\\", "/").rstrip("/"), "/", "\\"
+
+
+def absolute_to_relative_remappers(
+    base: str, on_unmatched: OnUnmatched = "ignore"
+) -> list[Remapper]:
+    r"""Regex pairs rewriting a path under ``base`` into its form relative to
+    ``base`` — for `SignatureStore(file_remappers=...)` keying a live tree
+    into a portable cache of relative-path keys that no longer depends on
+    where the tree is mounted.
+
+    ``absolute_to_relative_remappers(r"E:\pool")`` yields rules equivalent to
+    ``[(r"^E:[/\\]pool(?:[/\\]|$)", "", "ignore"), (r"/", r"\\")]``: the file
+    ``E:\pool\sub\a.jpg`` is keyed as ``sub\a.jpg`` (an ``E:/pool/...`` input
+    lands on the same key — the base matches with either separator flavor,
+    and the remainder is normalized to the base's). A path that does not
+    carry the ``base`` prefix — outside the tree, or already relative —
+    matches nothing and is governed by ``on_unmatched``: under the default it
+    keeps its form apart from separator normalization (already-relative paths
+    therefore stay in the relative key space), under ``"raise"`` it raises
+    `ValueError`, under ``"warn"`` it is logged and skipped.
+
+    ``base`` may be absolute (Windows ``E:\pool``, ``E:/pool``, ``C:\``, UNC,
+    or POSIX ``/mnt/e``, ``/``) or relative (``pool`` strips that prefix from
+    relative paths). Bases match textually, exactly as written (drive-letter
+    case included).
+
+    Raises
+    ------
+    ValueError
+        If ``base`` is empty, or ``on_unmatched`` is not one of
+        ``"raise"`` / ``"warn"`` / ``"ignore"``.
+    """
+    _check_on_unmatched(on_unmatched)
+    base, sep, other = _relative_base_rules(base)
+    if base in ("/", "\\"):
+        # A filesystem-root base is its own separator; consume it alone —
+        # no separator follows it before the first component.
+        prefix_pattern = r"^[/\\]"
+    else:
+        # Component-joined base with either separator flavor between
+        # components, then the separator (or end) after it — E:\pool never
+        # catches E:\pool2.
+        prefix_pattern = "^" + r"[/\\]".join(re.escape(part) for part in base.split(sep))
+        prefix_pattern += r"(?:[/\\]|$)"
+    return [
+        (prefix_pattern, "", on_unmatched),
+        (re.escape(other), sep.replace("\\", "\\\\")),
+    ]
+
+
+def relative_to_absolute_remappers(
+    base: str, on_unmatched: OnUnmatched = "ignore"
+) -> list[Remapper]:
+    r"""Regex pairs prepending ``base`` to a relative path — the inverse of
+    `absolute_to_relative_remappers` — for `SignatureStore(cache_remappers=...)
+    migrating a relative-keyed cache into the live absolute path space, or as
+    ``file_remappers`` to key live relative paths into an absolute-keyed
+    cache.
+
+    ``relative_to_absolute_remappers("/mnt/e/pool")`` yields rules equivalent
+    to ``[(r"^(?![A-Za-z]:|\\\\|[/\\])", "/mnt/e/pool/", "ignore"),
+    (r"\\", "/")]``: the stored relative key ``sub/a.jpg`` is read as
+    ``/mnt/e/pool/sub/a.jpg``. Paths that already look absolute in either
+    OS's syntax (drive-rooted ``C:``, UNC ``\\server``, or separator-rooted
+    ``/x`` / ``\x``) match nothing and are governed by ``on_unmatched`` —
+    under the default they pass through (separators normalized to the base's
+    flavor), so re-applying the rule to its own output is a no-op.
+
+    ``base`` may be absolute or relative; a relative base re-anchors relative
+    paths into that base's space (prepend ``os.path.relpath(A, B)`` to move
+    paths relative to A into paths relative to B). Bases match textually,
+    exactly as written.
+
+    Raises
+    ------
+    ValueError
+        If ``base`` is empty, or ``on_unmatched`` is not one of
+        ``"raise"`` / ``"warn"`` / ``"ignore"``.
+    """
+    _check_on_unmatched(on_unmatched)
+    base, sep, other = _relative_base_rules(base)
+    # A filesystem-root base is its own separator; do not double it.
+    prefix = base if base in ("/", "\\") else base + sep
+    return [
+        (_NOT_ABSOLUTE, prefix.replace("\\", "\\\\"), on_unmatched),
+        (re.escape(other), sep.replace("\\", "\\\\")),
+    ]
 
 
 def file_quick_signature(path: str, remappers: Sequence[Remapper] | None = None) -> str:

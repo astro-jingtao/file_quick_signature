@@ -6,9 +6,12 @@ import re
 import pytest
 
 from file_quick_signature.key import (
+    absolute_to_relative_remappers,
     apply_remappers,
     build_key,
     linux_to_windows_remappers,
+    parse_key,
+    relative_to_absolute_remappers,
     windows_to_linux_remappers,
 )
 from file_quick_signature.store import SignatureStore
@@ -379,3 +382,55 @@ class TestCrossPlatformBridging:
         results, not_found_idx, _ = store.query([str(f)])
         assert results == ["payload"]
         assert not_found_idx == []
+
+
+class TestRelativeRemappedStore:
+    """Relative-path keys: file-side relativizing and cache-side re-absoluting."""
+
+    def test_relative_file_remappers_key_and_hit(self, tmp_path):
+        base = os.path.realpath(str(tmp_path))
+        f = _make_file(tmp_path / "aa" / "cc", size=9)
+        store = SignatureStore(None, file_remappers=absolute_to_relative_remappers(base))
+
+        results, not_found_idx, _ = store.query(
+            [str(f)], compute=lambda ps: ["payload"], save=False
+        )
+        assert results == ["payload"]
+        assert not_found_idx == [0]
+        assert parse_key(store.signature(str(f))).path == os.path.join("aa", "cc")
+
+        # A second query hits the recorded relative key.
+        results2, not_found_idx2, _ = store.query([str(f)])
+        assert results2 == ["payload"]
+        assert not_found_idx2 == []
+
+    def test_relative_cache_migrated_to_absolute(self, tmp_path):
+        base = os.path.realpath(str(tmp_path))
+        f = _make_file(tmp_path / "aa" / "cc", size=9, mtime_ns=2500)
+        rel_key = build_key(os.path.join("aa", "cc"), 9, 2500)
+        json_path = tmp_path / "signature.json"
+        json_path.write_text(json.dumps({rel_key: "payload"}), encoding="utf-8")
+
+        store = SignatureStore(
+            str(json_path), cache_remappers=relative_to_absolute_remappers(base)
+        ).load()
+
+        assert store.data == {store.signature(str(f)): "payload"}
+        results, not_found_idx, _ = store.query([str(f)])
+        assert results == ["payload"]
+        assert not_found_idx == []
+
+    def test_query_raises_outside_strict_base(self, tmp_path):
+        (tmp_path / "keep").mkdir()
+        base = os.path.realpath(str(tmp_path / "keep"))
+        inside = _make_file(tmp_path / "keep" / "a.jpg", size=3)
+        outside = _make_file(tmp_path / "drop" / "b.jpg", size=3)
+        store = SignatureStore(
+            None,
+            file_remappers=absolute_to_relative_remappers(base, on_unmatched="raise"),
+        )
+
+        _results, not_found_idx, _ = store.query([str(inside)])
+        assert not_found_idx == [0]  # a plain miss, no raise
+        with pytest.raises(ValueError, match="did not match"):
+            store.query([str(outside)])

@@ -88,6 +88,31 @@ SignatureStore(
 
 `linux_to_windows_remappers(linux_root, windows_root)` yields `[(r"^<linux_root>(?=/|$)", "<windows_root>"), (r"/", r"\\")]`; `windows_to_linux_remappers(windows_root, linux_root)` the inverse. `/` separators in the Windows root are accepted (`E:/pool` behaves as `E:\pool`); roots match exactly as given (drive-letter case included). Paths outside the root keep their prefix — only their separators are normalized. Both functions raise `ValueError` for a filesystem root (`/` or `\`).
 
+### Relative-path keys
+
+`key.py` also generates base-relative pairs — a portable cache whose keys no longer depend on where the tree lives:
+
+```python
+from file_quick_signature.key import absolute_to_relative_remappers, relative_to_absolute_remappers
+
+# Key live files relative to the pool root: E:\pool\sub\a.jpg -> "sub\a.jpg"
+SignatureStore("signature.json", file_remappers=absolute_to_relative_remappers(r"E:\pool"))
+
+# Strict: any path outside the base is an error, not a silently mis-keyed lookup
+absolute_to_relative_remappers("/mnt/e/pool", on_unmatched="raise")
+
+# Reverse: stored relative keys are read as absolute live paths at load
+SignatureStore("signature.json", cache_remappers=relative_to_absolute_remappers("/mnt/e/pool"))
+```
+
+`absolute_to_relative_remappers(base, on_unmatched="ignore")` yields a prefix rule stripping `base` and its separator, plus a separator-normalization rule to the base's flavor — `E:/pool/sub/a.jpg` and `E:\pool\sub\a.jpg` land on the same key. A path not carrying the `base` prefix (outside the tree, or already relative) is governed by `on_unmatched`; under the default it keeps its form apart from separator normalization, so already-relative paths stay in the relative key space.
+
+`relative_to_absolute_remappers(base, on_unmatched="ignore")` is the inverse: it prepends `base` + separator to paths that do not look absolute in either OS's syntax (`C:`, `\\unc`, `/rooted`, `\rooted`); already-absolute paths match nothing and pass through (per `on_unmatched`), so re-applying is a no-op.
+
+Bases of any flavor work — Windows `E:\pool` / `E:/pool` / `C:\`, POSIX `/mnt/e` / `/`, or relative (`pool` strips that prefix from relative paths; `relative_to_absolute_remappers(os.path.relpath(A, B))` re-anchors paths relative to `A` into paths relative to `B`). Bases match textually, exactly as written (drive-letter case included).
+
+Cross-OS sharing: relative keys carry the base flavor's separators, so to share one relative cache between Windows and POSIX, append a separator rule on the Windows side so both key with `/` — `file_remappers=absolute_to_relative_remappers(r"E:\pool") + [(r"\\", "/")]`.
+
 ## Development
 
 Tests (class-based pytest, stdlib-only package):

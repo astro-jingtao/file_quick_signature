@@ -6,11 +6,13 @@ import pytest
 
 from file_quick_signature.key import (
     SignatureKey,
+    absolute_to_relative_remappers,
     apply_remappers,
     build_key,
     file_quick_signature,
     linux_to_windows_remappers,
     parse_key,
+    relative_to_absolute_remappers,
     remap_key,
     windows_to_linux_remappers,
 )
@@ -268,3 +270,140 @@ class TestPlatformBridgeRemappers:
         assert windows_to_linux_remappers("E:\\", "/mnt/e/") == windows_to_linux_remappers(
             "E:", "/mnt/e"
         )
+
+
+class TestRelativeToRemappers:
+    """Generated base-relative pairs: prefix strip + separator normalize."""
+
+    def test_windows_base_strips_prefix(self):
+        pairs = absolute_to_relative_remappers(r"E:\pool")
+        assert apply_remappers(r"E:\pool\sub\a.jpg", pairs) == r"sub\a.jpg"
+        assert apply_remappers(r"E:\pool\a.jpg", pairs) == r"a.jpg"
+
+    def test_posix_base_strips_prefix(self):
+        pairs = absolute_to_relative_remappers("/mnt/e/pool")
+        assert apply_remappers("/mnt/e/pool/sub/a.jpg", pairs) == "sub/a.jpg"
+        assert apply_remappers("/mnt/e/pool/a.jpg", pairs) == "a.jpg"
+
+    def test_base_matched_with_either_separator(self):
+        # The base's own separators are matched tolerantly, so a mixed-flavor
+        # input lands on the same key.
+        pairs = absolute_to_relative_remappers(r"E:\pool")
+        assert apply_remappers("E:/pool/sub/a.jpg", pairs) == r"sub\a.jpg"
+
+    def test_remainder_separators_normalized(self):
+        win = absolute_to_relative_remappers(r"E:\pool")
+        assert apply_remappers(r"E:\pool\sub/a.jpg", win) == r"sub\a.jpg"
+        posix = absolute_to_relative_remappers("/mnt/e/pool")
+        assert apply_remappers("/mnt/e/pool/sub\\a.jpg", posix) == "sub/a.jpg"
+
+    def test_filesystem_root_bases(self):
+        assert apply_remappers("/a/b.jpg", absolute_to_relative_remappers("/")) == "a/b.jpg"
+        assert apply_remappers(r"C:\a\b.jpg", absolute_to_relative_remappers("C:\\")) == r"a\b.jpg"
+        assert apply_remappers("C:/a/b.jpg", absolute_to_relative_remappers("C:\\")) == r"a\b.jpg"
+
+    def test_base_itself_maps_to_empty(self):
+        assert apply_remappers("/mnt/e", absolute_to_relative_remappers("/mnt/e")) == ""
+
+    def test_relative_base_strips_relative_prefix(self):
+        pairs = absolute_to_relative_remappers("pool")
+        assert apply_remappers("pool/sub/a.jpg", pairs) == "sub/a.jpg"
+
+    def test_sibling_prefix_not_stripped(self):
+        # /mnt/e shares a textual prefix with /mnt/e2 — boundary must hold.
+        pairs = absolute_to_relative_remappers("/mnt/e")
+        assert apply_remappers("/mnt/e2/x.jpg", pairs) == "/mnt/e2/x.jpg"
+
+    def test_outside_path_flow_per_on_unmatched(self):
+        strict = absolute_to_relative_remappers("/mnt/e", on_unmatched="raise")
+        with pytest.raises(ValueError, match="did not match"):
+            apply_remappers("/other/x.jpg", strict)
+        # Default: unchanged (the POSIX normalize rule is a no-op here).
+        lax = absolute_to_relative_remappers("/mnt/e")
+        assert apply_remappers("/other/x.jpg", lax) == "/other/x.jpg"
+
+    def test_already_relative_stays_relative(self):
+        # No base prefix -> governed by on_unmatched; under the default only
+        # separators normalize, so relative paths stay in the relative space.
+        pairs = absolute_to_relative_remappers(r"E:\pool")
+        assert apply_remappers(r"sub\a.jpg", pairs) == r"sub\a.jpg"
+        assert apply_remappers("sub/a.jpg", pairs) == r"sub\a.jpg"
+
+    def test_on_unmatched_stamped_on_prefix_rule_only(self):
+        pairs = absolute_to_relative_remappers("/mnt/e", on_unmatched="warn")
+        assert pairs[0][2] == "warn"
+        assert len(pairs[1]) == 2
+
+    def test_invalid_on_unmatched_raises_at_generation(self):
+        with pytest.raises(ValueError, match="on_unmatched"):
+            absolute_to_relative_remappers("/mnt/e", on_unmatched="boom")
+        with pytest.raises(ValueError, match="on_unmatched"):
+            relative_to_absolute_remappers("/mnt/e", on_unmatched="boom")
+
+    def test_empty_base_raises(self):
+        with pytest.raises(ValueError, match="empty base"):
+            absolute_to_relative_remappers("")
+        with pytest.raises(ValueError, match="empty base"):
+            relative_to_absolute_remappers("")
+
+    def test_round_trip_both_directions(self):
+        for base, abs_path, rel in [
+            (r"E:\pool", r"E:\pool\sub\a.jpg", r"sub\a.jpg"),
+            ("/mnt/e/pool", "/mnt/e/pool/deep/img.png", "deep/img.png"),
+        ]:
+            to_rel = absolute_to_relative_remappers(base)
+            to_abs = relative_to_absolute_remappers(base)
+            assert apply_remappers(abs_path, to_rel) == rel
+            assert apply_remappers(rel, to_abs) == abs_path
+            assert apply_remappers(apply_remappers(rel, to_abs), to_rel) == rel
+
+    def test_remap_key_round_trip(self):
+        to_rel = absolute_to_relative_remappers("/mnt/e/pool")
+        to_abs = relative_to_absolute_remappers("/mnt/e/pool")
+        key = build_key("/mnt/e/pool/a.jpg", 98304, 133851860294701234)
+        assert remap_key(remap_key(key, to_rel), to_abs) == key
+
+
+class TestRelativeFromRemappers:
+    """Generated prepend pairs: base prefix + separator normalize."""
+
+    def test_prepends_base(self):
+        win = relative_to_absolute_remappers(r"E:\pool")
+        assert apply_remappers(r"sub\a.jpg", win) == r"E:\pool\sub\a.jpg"
+        posix = relative_to_absolute_remappers("/mnt/e/pool")
+        assert apply_remappers("sub/a.jpg", posix) == "/mnt/e/pool/sub/a.jpg"
+
+    def test_mixed_separator_relative_normalized(self):
+        win = relative_to_absolute_remappers(r"E:\pool")
+        assert apply_remappers("sub/a.jpg", win) == r"E:\pool\sub\a.jpg"
+
+    def test_absolute_paths_not_prefixed(self):
+        win = relative_to_absolute_remappers(r"E:\pool")
+        assert apply_remappers(r"C:\other\a.jpg", win) == r"C:\other\a.jpg"
+        posix = relative_to_absolute_remappers("/mnt/e/pool")
+        assert apply_remappers("/other/a.jpg", posix) == "/other/a.jpg"
+        assert apply_remappers(r"\\server\share\a.jpg", posix) == "//server/share/a.jpg"
+        # On pass-through only separators normalize:
+        assert apply_remappers("/other/a.jpg", win) == r"\other\a.jpg"
+
+    def test_drive_like_relative_skipped_textually(self):
+        # Textual drive detection cannot distinguish a POSIX "a:b" filename
+        # from a drive root; it is skipped (documented caveat).
+        posix = relative_to_absolute_remappers("/mnt/e")
+        assert apply_remappers("a:b", posix) == "a:b"
+
+    def test_on_unmatched_governs_absolute_paths(self):
+        strict = relative_to_absolute_remappers("/mnt/e", on_unmatched="raise")
+        with pytest.raises(ValueError, match="did not match"):
+            apply_remappers("/abs/a.jpg", strict)
+
+    def test_root_base_no_doubled_separator(self):
+        pairs = relative_to_absolute_remappers("/")
+        assert apply_remappers("a/b.jpg", pairs) == "/a/b.jpg"
+        assert apply_remappers(r"a\b.jpg", pairs) == "/a/b.jpg"
+
+    def test_relative_base_reanchors(self):
+        # Paths relative to A become paths relative to B by prepending
+        # relpath(A, B).
+        pairs = relative_to_absolute_remappers("../b")
+        assert apply_remappers("x/y.jpg", pairs) == "../b/x/y.jpg"
