@@ -6,27 +6,13 @@ from collections.abc import Sequence
 import os
 from typing import NamedTuple
 
-from file_quick_signature.remapper import (
-    AbsoluteToRelativeRemapper,
-    LinuxToWindowsRemapper,
-    RegexRemapper,
-    RelativeToAbsoluteRemapper,
-    Remapper,
-    WindowsToLinuxRemapper,
-)
+# Remapper is imported for the type annotations below — the remapper classes
+# themselves live in (and are imported from) `file_quick_signature.remapper`.
+from file_quick_signature.remapper import Remapper
 
-# The remapper classes live in `file_quick_signature.remapper` and are
-# re-exported here so the historical `file_quick_signature.key` import path
-# keeps working.
 __all__ = [
     "KEY_SEPARATOR",
-    "AbsoluteToRelativeRemapper",
-    "LinuxToWindowsRemapper",
-    "RegexRemapper",
-    "RelativeToAbsoluteRemapper",
-    "Remapper",
     "SignatureKey",
-    "WindowsToLinuxRemapper",
     "apply_remappers",
     "build_key",
     "file_quick_signature",

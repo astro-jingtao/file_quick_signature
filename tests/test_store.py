@@ -5,15 +5,13 @@ import re
 
 import pytest
 
-from file_quick_signature.key import (
+from file_quick_signature.key import apply_remappers, build_key, parse_key
+from file_quick_signature.remapper import (
     AbsoluteToRelativeRemapper,
     LinuxToWindowsRemapper,
     RegexRemapper,
     RelativeToAbsoluteRemapper,
     WindowsToLinuxRemapper,
-    apply_remappers,
-    build_key,
-    parse_key,
 )
 from file_quick_signature.store import SignatureStore
 

@@ -48,7 +48,7 @@ results, not_found_idx, not_found_keys = store.query(
 
 ## Path remapping
 
-A remapper is any class with a `remap(path) -> str` method — however it works internally. The built-in classes live in `file_quick_signature.remapper` (`file_quick_signature.key` re-exports them, so both import paths work) and all subclass `Remapper` (the bridge classes are `RegexRemapper` subclasses); your own class plugs in the same way — as a plain duck type, no inheritance required. Both remap sides take one remapper, or an ordered sequence of them (later remappers see earlier output).
+A remapper is any class with a `remap(path) -> str` method — however it works internally. The built-in classes live in `file_quick_signature.remapper` and all subclass `Remapper` (the bridge classes are `RegexRemapper` subclasses); your own class plugs in the same way — as a plain duck type, no inheritance required. Both remap sides take one remapper, or an ordered sequence of them (later remappers see earlier output).
 
 - `RegexRemapper(*rules, on_unmatched=...)` — ordered `re.sub` rules: `(pattern, replacement)` pairs, e.g. `RegexRemapper((r"^E:", "/mnt/e"), (r"\\", "/"))`. A Windows path used as a *replacement* must double its backslashes: `path.replace("\\", "\\\\")` — a lone `\U`/`\A` in a replacement template is an escape error. Rules are validated once at construction.
 - `LinuxToWindowsRemapper(linux_root, windows_root, on_unmatched=...)` / `WindowsToLinuxRemapper(...)` — the cross-OS bridge (a prefix-swap + separator `RegexRemapper` under a direction-named constructor).

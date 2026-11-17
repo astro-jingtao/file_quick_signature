@@ -3,9 +3,7 @@ import re
 
 import pytest
 
-from file_quick_signature import key as key_module, remapper as remapper_module
 from file_quick_signature.key import (
-    RegexRemapper,
     SignatureKey,
     apply_remappers,
     build_key,
@@ -13,6 +11,7 @@ from file_quick_signature.key import (
     parse_key,
     remap_key,
 )
+from file_quick_signature.remapper import RegexRemapper
 
 
 class TestBuildAndParseRoundTrip:
@@ -167,21 +166,3 @@ class TestRemapKey:
     def test_idempotent_when_nothing_matches(self):
         key = build_key(r"E:\pool\a.jpg", 5, 6)
         assert remap_key(key, RegexRemapper((r"^/mnt", r"/media"))) == key
-
-
-class TestModuleLayout:
-    """key re-exports the remapper classes: the historical import path stays valid."""
-
-    @pytest.mark.parametrize(
-        "name",
-        [
-            "Remapper",
-            "RegexRemapper",
-            "LinuxToWindowsRemapper",
-            "WindowsToLinuxRemapper",
-            "AbsoluteToRelativeRemapper",
-            "RelativeToAbsoluteRemapper",
-        ],
-    )
-    def test_key_reexports_remapper_classes(self, name):
-        assert getattr(key_module, name) is getattr(remapper_module, name)
