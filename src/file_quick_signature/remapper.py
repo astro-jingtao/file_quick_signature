@@ -35,12 +35,15 @@ _ANY_ROOTED = re.compile(r"^(?:[A-Za-z]:|\\\\|[/\\])")
 
 @runtime_checkable
 class Remapper(Protocol):
-    """The library's remapping interface: anything with a ``remap`` method.
+    """The library's remapping interface, and the base class of the built-ins.
 
     A remapper rewrites one path string into the path space of a cache; how
     it does so — regex rules, os.path functions, anything — is the class's
-    own choice. The classes in this module cover the common cases; any other
-    class with this method is accepted wherever a remapper is taken.
+    own choice. Any class with a ``remap`` method is accepted wherever a
+    remapper is taken (structural check — no inheritance required), so user
+    classes stay plain duck types; the built-in classes in this module
+    subclass `Remapper` explicitly and are therefore Remappers both
+    structurally and by inheritance.
     """
 
     def remap(self, path: str) -> str:
@@ -65,23 +68,28 @@ def _report_unmatched(path: str, on_unmatched: OnUnmatched, message: str) -> str
     return path
 
 
-class RegexRemapper:
+class RegexRemapper(Remapper):
     """A remapper applying ordered regex rules with ``re.sub``.
 
     Each rule is a ``(pattern, replacement)`` pair, optionally extended with
     a third element ``on_unmatched`` selecting the behavior when the pattern
     matches nothing: ``"raise"`` raises `ValueError`, ``"warn"`` logs a
-    warning and leaves the path unchanged, and ``"ignore"`` (the default, and
-    always the behavior of bare two-element pairs) silently leaves it
-    unchanged. Rules apply in order, later rules seeing earlier output; a
-    replacement containing Windows backslashes must double them (``re.sub``
-    template semantics — a lone ``\\U`` is an escape error). Rules are
-    validated once at construction, so a malformed rule or a bogus
-    ``on_unmatched`` value fails immediately, never on the first path.
+    warning and leaves the path unchanged, and ``"ignore"`` silently leaves
+    it unchanged. A bare two-element pair takes the remapper-level
+    ``on_unmatched`` (itself ``"ignore"`` by default), so
+    ``RegexRemapper((p, r), on_unmatched="raise")`` governs every bare pair
+    at once while a rule's own third element still wins. Rules apply in
+    order, later rules seeing earlier output; a replacement containing
+    Windows backslashes must double them (``re.sub`` template semantics — a
+    lone ``\\U`` is an escape error). Rules are validated once at
+    construction, so a malformed rule or a bogus ``on_unmatched`` value
+    fails immediately, never on the first path.
     """
 
-    def __init__(self, *rules: RegexRule) -> None:
-        """``rules`` — one or more ``(pattern, replacement[, on_unmatched])`` tuples."""
+    def __init__(self, *rules: RegexRule, on_unmatched: OnUnmatched = "ignore") -> None:
+        """``rules`` — one or more ``(pattern, replacement[, on_unmatched])`` tuples;
+        ``on_unmatched`` — the behavior of bare pairs when they match nothing."""
+        _check_on_unmatched(on_unmatched)
         self._rules: list[tuple[str, str, OnUnmatched]] = []
         for rule in rules:
             if not isinstance(rule, (tuple, list)) or len(rule) not in (2, 3):
@@ -90,14 +98,14 @@ class RegexRemapper:
                     "or '(pattern, replacement, on_unmatched)'"
                 )
             if len(rule) == 3:
-                pattern, replacement, on_unmatched = rule
+                pattern, replacement, rule_on_unmatched = rule
             else:
                 pattern, replacement = rule
-                on_unmatched = "ignore"
+                rule_on_unmatched = on_unmatched
             # Validate before anything can match so a bogus value cannot hide
             # behind a pattern that happens to hit.
-            _check_on_unmatched(on_unmatched)
-            self._rules.append((pattern, replacement, on_unmatched))
+            _check_on_unmatched(rule_on_unmatched)
+            self._rules.append((pattern, replacement, rule_on_unmatched))
 
     def remap(self, path: str) -> str:
         """Apply every rule in order; an unmatched rule acts per its on_unmatched."""
@@ -111,13 +119,13 @@ class RegexRemapper:
         return path
 
 
-def _bridge_rules(
-    src_root: str, dst_root: str, src_sep: str, dst_sep: str, on_unmatched: OnUnmatched
-) -> list[RegexRule]:
+def _bridge_rules(src_root: str, dst_root: str, src_sep: str, dst_sep: str) -> list[RegexRule]:
     # Shared rule builder for the two direction-named bridge classes: a
     # prefix-swap rule plus a separator-normalization rule, both built from
-    # the two roots. Only the prefix rule carries on_unmatched — the
-    # separator rule matches any path containing a source separator.
+    # the two roots. The prefix rule is a bare pair — it takes the remapper's
+    # on_unmatched; the separator rule pins "ignore" because a path with no
+    # source separators left (the root itself, already mapped) is not a
+    # non-match of the bridge.
     src = src_root.rstrip(src_sep)
     dst = dst_root.rstrip(dst_sep)
     # A root made of separators alone (either flavor) is a filesystem root.
@@ -134,25 +142,25 @@ def _bridge_rules(
         (
             "^" + re.escape(src) + "(?=" + re.escape(src_sep) + "|$)",
             dst.replace("\\", "\\\\"),
-            on_unmatched,
         ),
         # Separator normalization for the rest of the path. The swapped-in
         # dst prefix already uses dst separators, so it is unaffected.
-        (re.escape(src_sep), dst_sep.replace("\\", "\\\\")),
+        (re.escape(src_sep), dst_sep.replace("\\", "\\\\"), "ignore"),
     ]
 
 
-class LinuxToWindowsRemapper:
+class LinuxToWindowsRemapper(RegexRemapper):
     r"""Remaps Linux paths under ``linux_root`` into their Windows form under
     ``windows_root`` — for `SignatureStore(file_remappers=...)` when a
     Windows-built cache is read from a Linux mount.
 
     ``LinuxToWindowsRemapper("/mnt/e", "E:")`` maps ``/mnt/e/pool/a.jpg`` to
     ``E:\pool\a.jpg``, so live Linux lookups hit the Windows-built cache.
-    Internally a component-bounded prefix swap plus separator normalization,
-    so sibling roots (``/mnt/e2/...``) keep their prefix — only their
-    separators normalize. ``/`` separators in ``windows_root`` are accepted
-    (``E:/pool`` behaves as ``E:\pool``).
+    A `RegexRemapper` of a component-bounded prefix swap plus separator
+    normalization (both built from the two roots), so sibling roots
+    (``/mnt/e2/...``) keep their prefix — only their separators normalize.
+    ``/`` separators in ``windows_root`` are accepted (``E:/pool`` behaves
+    as ``E:\pool``).
 
     A path the ``linux_root`` prefix rule does not match is governed by
     ``on_unmatched`` (default ``"ignore"``: unchanged apart from separator
@@ -177,17 +185,13 @@ class LinuxToWindowsRemapper:
         self, linux_root: str, windows_root: str, on_unmatched: OnUnmatched = "ignore"
     ) -> None:
         """Build the prefix-swap + separator rules; see the class docstring."""
-        _check_on_unmatched(on_unmatched)
-        self._rules = RegexRemapper(
-            *_bridge_rules(linux_root, windows_root.replace("/", "\\"), "/", "\\", on_unmatched)
+        super().__init__(
+            *_bridge_rules(linux_root, windows_root.replace("/", "\\"), "/", "\\"),
+            on_unmatched=on_unmatched,
         )
 
-    def remap(self, path: str) -> str:
-        """Swap the ``linux_root`` prefix and normalize separators."""
-        return self._rules.remap(path)
 
-
-class WindowsToLinuxRemapper:
+class WindowsToLinuxRemapper(RegexRemapper):
     r"""Remaps Windows paths under ``windows_root`` into their Linux form under
     ``linux_root`` — for `SignatureStore(cache_remappers=...)` migrating
     Windows-built keys into the live Linux path space (the inverse of
@@ -221,14 +225,10 @@ class WindowsToLinuxRemapper:
         self, windows_root: str, linux_root: str, on_unmatched: OnUnmatched = "ignore"
     ) -> None:
         """Build the prefix-swap + separator rules; see the class docstring."""
-        _check_on_unmatched(on_unmatched)
-        self._rules = RegexRemapper(
-            *_bridge_rules(windows_root.replace("/", "\\"), linux_root, "\\", "/", on_unmatched)
+        super().__init__(
+            *_bridge_rules(windows_root.replace("/", "\\"), linux_root, "\\", "/"),
+            on_unmatched=on_unmatched,
         )
-
-    def remap(self, path: str) -> str:
-        """Swap the ``windows_root`` prefix and normalize separators."""
-        return self._rules.remap(path)
 
 
 def _flavor_module(base: str) -> ModuleType:
@@ -241,7 +241,7 @@ def _flavor_module(base: str) -> ModuleType:
     return posixpath
 
 
-class AbsoluteToRelativeRemapper:
+class AbsoluteToRelativeRemapper(Remapper):
     r"""Remaps absolute paths under ``base`` to their form relative to
     ``base`` (`os.path.relpath` semantics) — for `SignatureStore(
     file_remappers=...)` keying a live tree into a portable cache of
@@ -315,7 +315,7 @@ class AbsoluteToRelativeRemapper:
         return rel
 
 
-class RelativeToAbsoluteRemapper:
+class RelativeToAbsoluteRemapper(Remapper):
     r"""Remaps relative paths to their form under ``base`` — the inverse of
     `AbsoluteToRelativeRemapper` (`os.path.join` + normalize semantics) — for
     `SignatureStore(cache_remappers=...)` migrating a relative-keyed cache

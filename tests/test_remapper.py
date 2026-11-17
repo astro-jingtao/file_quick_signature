@@ -15,15 +15,46 @@ from file_quick_signature.remapper import (
 
 
 class TestRemapperShape:
-    """A remapper is any class with a remap method — no inheritance required."""
+    """Remapper is the consumer-side shape check AND the built-ins' base class:
+    any class with a remap method passes the check, while the built-ins are
+    Remappers by (direct or indirect) inheritance."""
 
-    def test_builtin_classes_satisfy_protocol(self):
+    def test_builtin_instances_are_remapper(self):
         for r in (
             RegexRemapper((r"^/a", "/x")),
             LinuxToWindowsRemapper("/mnt/e", "E:"),
+            WindowsToLinuxRemapper("E:", "/mnt/e"),
             AbsoluteToRelativeRemapper("/mnt/e"),
+            RelativeToAbsoluteRemapper("/mnt/e"),
         ):
             assert isinstance(r, Remapper)
+
+    def test_builtins_inherit_remapper(self):
+        # Nominal inheritance, not just structural conformance: Remapper sits
+        # in each built-in's MRO.
+        for cls in (
+            RegexRemapper,
+            LinuxToWindowsRemapper,
+            WindowsToLinuxRemapper,
+            AbsoluteToRelativeRemapper,
+            RelativeToAbsoluteRemapper,
+        ):
+            assert Remapper in cls.__mro__
+
+    def test_bridges_subclass_regex_remapper(self):
+        # The bridge classes are RegexRemapper subclasses — the prefix-swap +
+        # separator rules are their own rules, not a wrapped helper.
+        assert RegexRemapper in LinuxToWindowsRemapper.__mro__
+        assert RegexRemapper in WindowsToLinuxRemapper.__mro__
+
+    def test_duck_typed_class_passes_shape_check(self):
+        # A user class never inherits anything and still passes the check —
+        # that is what runtime_checkable-Protocol isinstance does.
+        class _Upper:
+            def remap(self, path):
+                return path.upper()
+
+        assert isinstance(_Upper(), Remapper)
 
 
 class TestRegexRemapper:
@@ -86,6 +117,42 @@ class TestOnUnmatched:
         key = build_key(r"E:\pool\a.jpg", 5, 6)
         with pytest.raises(ValueError, match="did not match"):
             remap_key(key, RegexRemapper((r"^/mnt", "/media", "raise")))
+
+
+class TestRemapperLevelOnUnmatched:
+    """RegexRemapper's on_unmatched is the default for its bare pairs; a rule's
+    own third element overrides it."""
+
+    def test_raise_governs_bare_pairs(self):
+        with pytest.raises(ValueError, match="did not match"):
+            RegexRemapper((r"^Z:", "/mnt/z"), on_unmatched="raise").remap("/a/b")
+
+    def test_warn_governs_bare_pairs(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            out = RegexRemapper((r"^Z:", "/mnt/z"), on_unmatched="warn").remap("/a/b")
+        assert out == "/a/b"
+        assert any("did not match" in m for m in caplog.messages)
+
+    def test_default_remains_ignore(self):
+        assert RegexRemapper((r"^Z:", "/mnt/z")).remap("/a/b") == "/a/b"
+
+    def test_rule_third_element_overrides(self):
+        # An explicit per-rule on_unmatched wins over the remapper-level value.
+        remapper = RegexRemapper((r"^Z:", "/mnt/z", "ignore"), on_unmatched="raise")
+        assert remapper.remap("/a/b") == "/a/b"
+
+    def test_invalid_rejected_at_construction(self):
+        with pytest.raises(ValueError, match="Invalid on_unmatched"):
+            RegexRemapper((r"^Z:", "/mnt/z"), on_unmatched="boom")
+
+    def test_bridges_forward_on_unmatched_to_base(self):
+        # The bridge classes pass on_unmatched to the RegexRemapper base, so
+        # the bare prefix rule is governed by it...
+        with pytest.raises(ValueError, match="did not match"):
+            LinuxToWindowsRemapper("/mnt/e", "E:", on_unmatched="raise").remap("/other/a.jpg")
+        # ...while the separator rule stays "ignore": the root itself has no
+        # source separators left to normalize and must not raise.
+        assert WindowsToLinuxRemapper("E:", "/mnt/e", on_unmatched="raise").remap("E:") == "/mnt/e"
 
 
 class TestLinuxToWindowsRemapper:
