@@ -73,8 +73,8 @@ class TestRegexRemapper:
 class TestOnUnmatched:
     """A remapper's on_unmatched selects the behavior on a path it cannot remap."""
 
-    def test_bare_pair_stays_ignore(self):
-        # Historical semantics: a bare pair passes unmatched paths through.
+    def test_explicit_ignore_passes_through(self):
+        # A rule's own third element "ignore" passes unmatched paths through.
         assert RegexRemapper((r"^Z:", "/mnt/z", "ignore")).remap("/a/b") == "/a/b"
 
     def test_raise_raises(self):
