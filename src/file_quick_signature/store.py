@@ -7,10 +7,11 @@ import json
 import os
 from typing import Any, Optional, Union
 
-from file_quick_signature.key import Remapper, file_quick_signature, remap_key
+from file_quick_signature.key import file_quick_signature, remap_key
+from file_quick_signature.remapper import Remapper
 
 # A remapper is any class with a remap(path) -> str method (see
-# `key.Remapper`); one or an ordered sequence may be given, later remappers
+# `remapper.Remapper`); one or an ordered sequence may be given, later remappers
 # seeing earlier output.
 FileRemappers = Optional[Union[Remapper, Sequence[Remapper]]]
 

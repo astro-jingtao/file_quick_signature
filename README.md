@@ -14,7 +14,7 @@ pip install -e . --no-build-isolation
 
 ## Keys: build, reverse-parse
 
-`file_quick_signature.path` owns the key grammar:
+`file_quick_signature.key` owns the key grammar:
 
 ```python
 from file_quick_signature.key import file_quick_signature, parse_key
@@ -48,13 +48,13 @@ results, not_found_idx, not_found_keys = store.query(
 
 ## Path remapping
 
-A remapper is any class with a `remap(path) -> str` method (`key.Remapper`) — however it works internally. The built-in classes cover the common cases; your own class plugs in the same way. Both remap sides take one remapper, or an ordered sequence of them (later remappers see earlier output).
+A remapper is any class with a `remap(path) -> str` method — however it works internally. The built-in classes live in `file_quick_signature.remapper` (`file_quick_signature.key` re-exports them, so both import paths work); your own class plugs in the same way. Both remap sides take one remapper, or an ordered sequence of them (later remappers see earlier output).
 
 - `RegexRemapper(*rules)` — ordered `re.sub` rules: `(pattern, replacement)` pairs, e.g. `RegexRemapper((r"^E:", "/mnt/e"), (r"\\", "/"))`. A Windows path used as a *replacement* must double its backslashes: `path.replace("\\", "\\\\")` — a lone `\U`/`\A` in a replacement template is an escape error. Rules are validated once at construction.
 - `LinuxToWindowsRemapper(linux_root, windows_root, on_unmatched=...)` / `WindowsToLinuxRemapper(...)` — the cross-OS bridge (regex internally).
 - `AbsoluteToRelativeRemapper(base, on_unmatched=...)` / `RelativeToAbsoluteRemapper(...)` — portable relative-path keys (`os.path.relpath` / `join` semantics internally).
 
-A rule or remapper's `on_unmatched` selects the behavior for a path it cannot remap: `"raise"` (raise `ValueError`), `"warn"` (log a warning, leave the path unchanged), or `"ignore"` (leave it unchanged — the default, and always the behavior of bare two-element regex pairs). `"warn"` reports through the `file_quick_signature.key` logger; with no logging configured, Python's last-resort handler still prints it to stderr. Example: `RegexRemapper((r"^E:\\pool", "E:/data", "raise"))` turns any path outside `E:\pool` into an error instead of a silently mis-keyed lookup. An invalid value raises `ValueError` at construction, so a typo cannot hide behind a hit.
+A rule or remapper's `on_unmatched` selects the behavior for a path it cannot remap: `"raise"` (raise `ValueError`), `"warn"` (log a warning, leave the path unchanged), or `"ignore"` (leave it unchanged — the default, and always the behavior of bare two-element regex pairs). `"warn"` reports through the `file_quick_signature.remapper` logger; with no logging configured, Python's last-resort handler still prints it to stderr. Example: `RegexRemapper((r"^E:\\pool", "E:/data", "raise"))` turns any path outside `E:\pool` into an error instead of a silently mis-keyed lookup. An invalid value raises `ValueError` at construction, so a typo cannot hide behind a hit.
 
 **File-side** (`file_remappers`) rewrites a live file's path before its key is built — new lookups and new records stay in the cache's path space. `RegexRemapper((r"xxx/yyy", "ccc"))`: the file `xxx/yyy/aa/cc` is looked up (and recorded) as `ccc/aa/cc`.
 
@@ -80,10 +80,10 @@ SignatureStore(
 )
 ```
 
-…or use the bridge classes (`key.py`), which component-bound the prefix rule so `/mnt/e2` does not catch `/mnt/e` rules:
+…or use the bridge classes (`remapper.py`), which component-bound the prefix rule so `/mnt/e2` does not catch `/mnt/e` rules:
 
 ```python
-from file_quick_signature.key import LinuxToWindowsRemapper, WindowsToLinuxRemapper
+from file_quick_signature.remapper import LinuxToWindowsRemapper, WindowsToLinuxRemapper
 
 # On Linux, files at /mnt/e/pool/... hit the Windows-built cache:
 SignatureStore("/mnt/e/pool/signature.json", file_remappers=LinuxToWindowsRemapper("/mnt/e", "E:"))
@@ -96,10 +96,10 @@ SignatureStore("/mnt/e/pool/signature.json", cache_remappers=WindowsToLinuxRemap
 
 ### Relative-path keys
 
-`key.py` also provides base-relative remappers — a portable cache whose keys no longer depend on where the tree lives:
+`remapper.py` also provides base-relative remappers — a portable cache whose keys no longer depend on where the tree lives:
 
 ```python
-from file_quick_signature.key import AbsoluteToRelativeRemapper, RelativeToAbsoluteRemapper
+from file_quick_signature.remapper import AbsoluteToRelativeRemapper, RelativeToAbsoluteRemapper
 
 # Key live files relative to the pool root: E:\pool\sub\a.jpg -> "sub\a.jpg"
 SignatureStore("signature.json", file_remappers=AbsoluteToRelativeRemapper(r"E:\pool"))

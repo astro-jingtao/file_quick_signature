@@ -16,8 +16,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture
 
-- `src` layout, no runtime dependencies. Two modules under `src/file_quick_signature/`:
-  - `key.py` — pure key logic, no I/O except `stat`: `build_key` / `parse_key` (reverse-parse into `SignatureKey(path, size, mtime_ns)`), `apply_remappers` / `remap_key`, the `Remapper` protocol (`remap(path) -> str` — any class with the method qualifies) and its built-ins — `RegexRemapper` (ordered `re.sub` rules), `LinuxToWindowsRemapper` / `WindowsToLinuxRemapper` (bridge), `AbsoluteToRelativeRemapper` / `RelativeToAbsoluteRemapper` (relpath/join semantics, flavor-dispatched ntpath/posixpath) — and `file_quick_signature`
+- `src` layout, no runtime dependencies. Three modules under `src/file_quick_signature/`:
+  - `key.py` — pure key logic, no I/O except `stat`: `build_key` / `parse_key` (reverse-parse into `SignatureKey(path, size, mtime_ns)`), `apply_remappers` / `remap_key` (consumer-side remapper dispatch), and `file_quick_signature`; re-exports the remapper classes so the historical key-module import path keeps working
+  - `remapper.py` — the remapper subsystem: the `Remapper` protocol (`remap(path) -> str` — any class with the method qualifies) and its built-ins — `RegexRemapper` (ordered `re.sub` rules), `LinuxToWindowsRemapper` / `WindowsToLinuxRemapper` (bridge), `AbsoluteToRelativeRemapper` / `RelativeToAbsoluteRemapper` (relpath/join semantics, flavor-dispatched ntpath/posixpath)
   - `store.py` — `SignatureStore`: JSON load/save (format identical to the historical `signature.json`), `query(paths, compute, save)` with compute-on-miss recording
 - `__init__.py` is documentation only; consumers import from the concrete modules (`from file_quick_signature.store import SignatureStore`).
 - Absolute imports only, never relative.
